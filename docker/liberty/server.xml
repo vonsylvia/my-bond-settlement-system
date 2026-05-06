@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<server description="Bond Settlement System - Liberty Server">
+
+    <!-- Features -->
+    <featureManager>
+        <feature>jakartaee-10.0</feature>
+        <feature>localConnector-1.0</feature>
+    </featureManager>
+
+    <!-- HTTP Endpoint -->
+    <httpEndpoint id="defaultHttpEndpoint"
+                  httpPort="9080"
+                  httpsPort="9443"
+                  host="*" />
+
+    <!-- Oracle DataSource -->
+    <library id="oracleLib">
+        <fileset dir="/opt/ibm/wlp/usr/shared/resources/jdbc"
+                 includes="ojdbc11.jar"/>
+    </library>
+
+    <dataSource id="OracleDS" jndiName="jdbc/OracleDS" type="javax.sql.DataSource">
+        <jdbcDriver libraryRef="oracleLib"/>
+        <properties.oracle
+            URL="jdbc:oracle:thin:@${env.ORACLE_HOST}:${env.ORACLE_PORT}/XEPDB1"
+            user="settlement"
+            password="settlement123"/>
+        <connectionManager maxPoolSize="20"
+                          minPoolSize="5"
+                          connectionTimeout="30s"/>
+    </dataSource>
+
+    <!-- IBM MQ Configuration -->
+    <library id="mqLib">
+        <fileset dir="/opt/ibm/wlp/usr/shared/resources/mq"
+                 includes="*.jar"/>
+    </library>
+
+    <jmsQueueConnectionFactory id="SwiftQueueCF"
+                               jndiName="jms/SwiftQueueCF">
+        <properties.wmqJms
+            transportType="CLIENT"
+            hostName="${env.MQ_HOST}"
+            port="${env.MQ_PORT}"
+            channel="SETTLEMENT.SVRCONN"
+            queueManager="SETTLEMENT_QM"/>
+    </jmsQueueConnectionFactory>
+
+    <jmsQueue id="SwiftSendQueue" jndiName="jms/SwiftSendQueue">
+        <properties.wmqJms
+            baseQueueName="SWIFT.SEND.QUEUE"
+            baseQueueManagerName="SETTLEMENT_QM"/>
+    </jmsQueue>
+
+    <jmsQueue id="SwiftReplyQueue" jndiName="jms/SwiftReplyQueue">
+        <properties.wmqJms
+            baseQueueName="SWIFT.REPLY.QUEUE"
+            baseQueueManagerName="SETTLEMENT_QM"/>
+    </jmsQueue>
+
+    <!-- JMS Activation Specification for MDB -->
+    <jmsActivationSpec id="bond-settlement/settlement-ejb/SwiftReplyMDB"
+                       authDataRef="mqAuth">
+        <properties.wmqJms
+            transportType="CLIENT"
+            hostName="${env.MQ_HOST}"
+            port="${env.MQ_PORT}"
+            channel="SETTLEMENT.SVRCONN"
+            queueManager="SETTLEMENT_QM"
+            destination="SWIFT.REPLY.QUEUE"
+            destinationType="jakarta.jms.Queue"/>
+    </jmsActivationSpec>
+
+    <authData id="mqAuth" user="app" password="passw0rd"/>
+
+    <!-- Application -->
+    <enterpriseApplication id="bond-settlement"
+                           location="bond-settlement.ear"
+                           name="bond-settlement">
+        <classloader apiTypeVisibility="spec, ibm-api, third-party"/>
+    </enterpriseApplication>
+
+    <!-- Logging -->
+    <logging consoleLogLevel="INFO"
+             traceSpecification="com.settlement.*=fine"/>
+
+</server>

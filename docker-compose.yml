@@ -1,0 +1,66 @@
+services:
+  # Oracle Database (using Oracle XE for local development)
+  oracle:
+    image: gvenzl/oracle-xe:21-slim
+    container_name: settlement-oracle
+    environment:
+      ORACLE_PASSWORD: settlement123
+      APP_USER: settlement
+      APP_USER_PASSWORD: settlement123
+    ports:
+      - "1521:1521"
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+      - ./db:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "healthcheck.sh"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+
+  # IBM MQ
+  ibmmq:
+    image: icr.io/ibm-messaging/mq:latest
+    container_name: settlement-mq
+    environment:
+      LICENSE: accept
+      MQ_QMGR_NAME: SETTLEMENT_QM
+      MQ_APP_PASSWORD: passw0rd
+      MQ_ADMIN_PASSWORD: passw0rd
+    ports:
+      - "1414:1414"
+      - "9443:9443"
+    volumes:
+      - mq-data:/mnt/mqm
+      - ./docker/mq/config.mqsc:/etc/mqm/config.mqsc
+    healthcheck:
+      test: ["CMD", "chkmqhealthy"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # WebSphere Liberty (for local deployment testing)
+  liberty:
+    image: icr.io/appcafe/websphere-liberty:full-java21-openj9-ubi-minimal
+    container_name: settlement-liberty
+    ports:
+      - "9080:9080"
+      - "9445:9444"
+    volumes:
+      - ./docker/liberty/server.xml:/config/server.xml
+      - ./settlement-ear/target/bond-settlement.ear:/config/apps/bond-settlement.ear
+    depends_on:
+      oracle:
+        condition: service_healthy
+      ibmmq:
+        condition: service_healthy
+    environment:
+      ORACLE_HOST: oracle
+      ORACLE_PORT: 1521
+      MQ_HOST: ibmmq
+      MQ_PORT: 1414
+
+volumes:
+  oracle-data:
+  mq-data:

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<application xmlns="https://jakarta.ee/xml/ns/jakartaee"
+             xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xsi:schemaLocation="https://jakarta.ee/xml/ns/jakartaee
+                                 https://jakarta.ee/xml/ns/jakartaee/application_10.xsd"
+             version="10">
+
+    <display-name>Bond Settlement System</display-name>
+
+    <module>
+        <web>
+            <web-uri>settlement.war</web-uri>
+            <context-root>/settlement</context-root>
+        </web>
+    </module>
+
+    <module>
+        <ejb>settlement-ejb.jar</ejb>
+    </module>
+
+</application>

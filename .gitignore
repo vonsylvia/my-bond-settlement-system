@@ -1,0 +1,22 @@
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Maven
+target/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node.js
+settlement-frontend/node_modules/
+settlement-frontend/dist/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
