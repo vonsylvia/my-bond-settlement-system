@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   # Oracle Database (using Oracle XE for local development)
   oracle:
@@ -42,14 +44,15 @@ services:
 
   # WebSphere Liberty (for local deployment testing)
   liberty:
-    image: icr.io/appcafe/websphere-liberty:full-java21-openj9-ubi-minimal
+    image: icr.io/appcafe/websphere-liberty:24.0.0.12-full-java21-openj9-ubi-minimal
     container_name: settlement-liberty
     ports:
       - "9080:9080"
-      - "9445:9444"
+      - "9444:9443"
     volumes:
       - ./docker/liberty/server.xml:/config/server.xml
       - ./settlement-ear/target/bond-settlement.ear:/config/apps/bond-settlement.ear
+      - ./docker/liberty/jdbc/ojdbc11.jar:/opt/ibm/wlp/usr/shared/resources/jdbc/ojdbc11.jar
     depends_on:
       oracle:
         condition: service_healthy

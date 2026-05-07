@@ -20,7 +20,7 @@
                 </activation-config-property>
                 <activation-config-property>
                     <activation-config-property-name>destination</activation-config-property-name>
-                    <activation-config-property-value>jms/SwiftReplyQueue</activation-config-property-value>
+                    <activation-config-property-value>SWIFT.REPLY.QUEUE</activation-config-property-value>
                 </activation-config-property>
             </activation-config>
         </message-driven>

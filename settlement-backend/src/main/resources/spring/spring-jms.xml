@@ -1,35 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <beans xmlns="http://www.springframework.org/schema/beans"
        xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-       xmlns:jee="http://www.springframework.org/schema/jee"
        xsi:schemaLocation="
            http://www.springframework.org/schema/beans
-           http://www.springframework.org/schema/beans/spring-beans.xsd
-           http://www.springframework.org/schema/jee
-           http://www.springframework.org/schema/jee/spring-jee.xsd">
+           http://www.springframework.org/schema/beans/spring-beans.xsd">
 
-    <!-- JMS ConnectionFactory from WebSphere JNDI -->
-    <jee:jndi-lookup id="jmsConnectionFactory"
-                     jndi-name="jms/SwiftQueueCF"
-                     expected-type="jakarta.jms.ConnectionFactory"/>
-
-    <!-- Send Queue -->
-    <jee:jndi-lookup id="swiftSendQueue"
-                     jndi-name="jms/SwiftSendQueue"
-                     expected-type="jakarta.jms.Queue"/>
-
-    <!-- Reply Queue -->
-    <jee:jndi-lookup id="swiftReplyQueue"
-                     jndi-name="jms/SwiftReplyQueue"
-                     expected-type="jakarta.jms.Queue"/>
-
-    <!-- Spring JmsTemplate for sending messages -->
-    <bean id="jmsTemplate" class="org.springframework.jms.core.JmsTemplate">
-        <property name="connectionFactory" ref="jmsConnectionFactory"/>
-        <property name="defaultDestination" ref="swiftSendQueue"/>
-        <property name="receiveTimeout" value="5000"/>
-        <property name="deliveryPersistent" value="true"/>
-        <property name="sessionTransacted" value="true"/>
-    </bean>
+    <!-- JMS beans are now created programmatically in com.settlement.config.MqClientConfig. -->
 
 </beans>

@@ -1,6 +1,5 @@
 package com.settlement.ejb;
 
-import com.settlement.reconcile.ReconciliationService;
 import jakarta.annotation.Resource;
 import jakarta.ejb.ActivationConfigProperty;
 import jakarta.ejb.MessageDriven;
@@ -13,6 +12,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.context.ContextLoader;
 import org.springframework.web.context.WebApplicationContext;
+
+import java.lang.reflect.Method;
 
 /**
  * Message-Driven Bean that listens on the SWIFT reply queue for MT548
@@ -27,7 +28,7 @@ import org.springframework.web.context.WebApplicationContext;
         ),
         @ActivationConfigProperty(
             propertyName = "destination",
-            propertyValue = "jms/SwiftReplyQueue"
+            propertyValue = "SWIFT.REPLY.QUEUE"
         ),
         @ActivationConfigProperty(
             propertyName = "acknowledgeMode",
@@ -55,14 +56,14 @@ public class SwiftReplyMDB implements MessageListener {
 
             log.info("Received SWIFT reply: correlationId={}, type={}", correlationId, messageType);
 
-            ReconciliationService reconciliationService = getReconciliationService();
+            Object reconciliationService = getReconciliationService();
             if (reconciliationService == null) {
                 log.error("ReconciliationService not available, rolling back message");
                 mdbContext.setRollbackOnly();
                 return;
             }
 
-            reconciliationService.processSwiftReply(correlationId, messageBody);
+            invokeProcessSwiftReply(reconciliationService, correlationId, messageBody);
 
         } catch (JMSException e) {
             log.error("Error processing JMS message", e);
@@ -73,11 +74,16 @@ public class SwiftReplyMDB implements MessageListener {
         }
     }
 
-    private ReconciliationService getReconciliationService() {
+    private Object getReconciliationService() {
         WebApplicationContext ctx = ContextLoader.getCurrentWebApplicationContext();
         if (ctx == null) {
             return null;
         }
-        return ctx.getBean(ReconciliationService.class);
+        return ctx.getBean("reconciliationService");
+    }
+
+    private void invokeProcessSwiftReply(Object reconciliationService, String correlationId, String messageBody) throws Exception {
+        Method method = reconciliationService.getClass().getMethod("processSwiftReply", String.class, String.class);
+        method.invoke(reconciliationService, correlationId, messageBody);
     }
 }

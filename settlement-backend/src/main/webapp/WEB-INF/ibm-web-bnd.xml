@@ -13,4 +13,8 @@
     <!-- JMS ConnectionFactory binding -->
     <resource-ref name="jms/SwiftQueueCF" binding-name="jms/SwiftQueueCF"/>
 
+    <!-- JMS Queue bindings -->
+    <resource-ref name="jms/SwiftSendQueue" binding-name="jms/SwiftSendQueue"/>
+    <resource-ref name="jms/SwiftReplyQueue" binding-name="jms/SwiftReplyQueue"/>
+
 </web-bnd>

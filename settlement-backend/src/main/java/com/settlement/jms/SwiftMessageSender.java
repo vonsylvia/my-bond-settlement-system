@@ -5,6 +5,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jms.core.JmsTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.ObjectProvider;
 
 /**
  * Sends SWIFT MT messages to IBM MQ send queue for delivery to SWIFT Alliance Gateway.
@@ -14,14 +15,15 @@ public class SwiftMessageSender {
 
     private static final Logger log = LoggerFactory.getLogger(SwiftMessageSender.class);
 
-    private final JmsTemplate jmsTemplate;
+    private final ObjectProvider<JmsTemplate> jmsTemplateProvider;
 
-    public SwiftMessageSender(JmsTemplate jmsTemplate) {
-        this.jmsTemplate = jmsTemplate;
+    public SwiftMessageSender(ObjectProvider<JmsTemplate> jmsTemplateProvider) {
+        this.jmsTemplateProvider = jmsTemplateProvider;
     }
 
     public void sendSwiftMessage(String tradeRef, String mt541Message) {
         try {
+            JmsTemplate jmsTemplate = jmsTemplateProvider.getObject();
             jmsTemplate.send(session -> {
                 var textMessage = session.createTextMessage(mt541Message);
                 textMessage.setJMSCorrelationID(tradeRef);

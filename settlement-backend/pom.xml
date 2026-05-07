@@ -85,7 +85,13 @@
             <artifactId>pw-swift-core</artifactId>
         </dependency>
 
-        <!-- IBM MQ (provided by Liberty) -->
+        <!-- IBM MQ Jakarta client for application-managed sending -->
+        <dependency>
+            <groupId>com.ibm.mq</groupId>
+            <artifactId>com.ibm.mq.jakarta.client</artifactId>
+        </dependency>
+
+        <!-- IBM MQ legacy client remains available to the container -->
         <dependency>
             <groupId>com.ibm.mq</groupId>
             <artifactId>com.ibm.mq.allclient</artifactId>

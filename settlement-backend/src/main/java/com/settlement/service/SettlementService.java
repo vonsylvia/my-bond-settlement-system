@@ -10,6 +10,7 @@ import com.settlement.exception.ResourceNotFoundException;
 import com.settlement.jms.SwiftMessageSender;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,18 +26,18 @@ public class SettlementService {
     private final BondHoldingDao holdingDao;
     private final AuditLogDao auditLogDao;
     private final SwiftMessageBuilder messageBuilder;
-    private final SwiftMessageSender messageSender;
+    private final ObjectProvider<SwiftMessageSender> messageSenderProvider;
 
     public SettlementService(SettlementInstructionDao instructionDao,
                              BondHoldingDao holdingDao,
                              AuditLogDao auditLogDao,
                              SwiftMessageBuilder messageBuilder,
-                             SwiftMessageSender messageSender) {
+                             ObjectProvider<SwiftMessageSender> messageSenderProvider) {
         this.instructionDao = instructionDao;
         this.holdingDao = holdingDao;
         this.auditLogDao = auditLogDao;
         this.messageBuilder = messageBuilder;
-        this.messageSender = messageSender;
+        this.messageSenderProvider = messageSenderProvider;
     }
 
     @Transactional
@@ -60,7 +61,7 @@ public class SettlementService {
         instruction.setMt541Raw(mt541Message);
         instructionDao.save(instruction);
 
-        messageSender.sendSwiftMessage(tradeRef, mt541Message);
+        messageSenderProvider.getObject().sendSwiftMessage(tradeRef, mt541Message);
 
         instruction.setStatus(InstructionStatus.SENT);
         instructionDao.save(instruction);
@@ -74,24 +75,24 @@ public class SettlementService {
         return instruction;
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public SettlementInstruction findByTradeRef(String tradeRef) {
         return instructionDao.findByTradeRef(tradeRef)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Settlement instruction not found: " + tradeRef));
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public List<SettlementInstruction> findAll(int page, int size) {
         return instructionDao.findAll(page, size);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public long count() {
         return instructionDao.count();
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public List<HoldingResponse> getHoldings(String accountId) {
         List<BondHolding> holdings;
         if (accountId != null && !accountId.isBlank()) {

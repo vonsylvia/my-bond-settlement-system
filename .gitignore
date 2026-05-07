@@ -20,3 +20,12 @@ settlement-frontend/dist/
 # Environment
 .env
 .env.local
+
+# Docker - large binary artifacts (downloaded at build time)
+docker/liberty/wmq.jakarta.jmsra.rar
+docker/liberty/mq-jms/
+docker/liberty/jdbc/
+
+# Docker volumes
+oracle-data/
+mq-data/

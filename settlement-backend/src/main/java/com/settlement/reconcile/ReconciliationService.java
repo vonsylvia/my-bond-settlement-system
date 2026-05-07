@@ -139,9 +139,25 @@ public class ReconciliationService {
                 }
             }
         } catch (Exception e) {
-            log.warn("Failed to parse trade ref from MT548, using correlationId", e);
+            log.debug("Prowide parsing failed, trying raw text extraction", e);
+        }
+        // Fallback: regex extraction for :20C::SEME//TRADE-REF pattern
+        String rawRef = extractTradeRefFromRawText(mt548Raw);
+        if (rawRef != null) {
+            return rawRef;
         }
         return fallbackCorrelationId;
+    }
+
+    private String extractTradeRefFromRawText(String rawMessage) {
+        if (rawMessage == null) return null;
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile(":20C::SEME//([A-Za-z0-9\\-]+)")
+                .matcher(rawMessage);
+        if (m.find()) {
+            return m.group(1);
+        }
+        return null;
     }
 
     private SettlementStatus extractSettlementStatus(String mt548Raw) {

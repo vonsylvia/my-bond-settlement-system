@@ -9,13 +9,13 @@
 
     <module>
         <web>
-            <web-uri>settlement.war</web-uri>
+            <web-uri>com.settlement-settlement-backend-1.0.0-SNAPSHOT.war</web-uri>
             <context-root>/settlement</context-root>
         </web>
     </module>
 
     <module>
-        <ejb>settlement-ejb.jar</ejb>
+        <ejb>com.settlement-settlement-ejb-1.0.0-SNAPSHOT.jar</ejb>
     </module>
 
 </application>

@@ -28,6 +28,7 @@
         <jackson.version>2.17.0</jackson.version>
         <prowide.version>SRU2023-9.4.19</prowide.version>
         <ibm.mq.version>9.3.5.1</ibm.mq.version>
+        <ibm.mq.jakarta.version>9.3.5.1</ibm.mq.jakarta.version>
         <oracle.jdbc.version>23.3.0.23.09</oracle.jdbc.version>
         <slf4j.version>2.0.12</slf4j.version>
         <log4j2.version>2.23.1</log4j2.version>
@@ -140,6 +141,11 @@
                 <artifactId>com.ibm.mq.allclient</artifactId>
                 <version>${ibm.mq.version}</version>
                 <scope>provided</scope>
+            </dependency>
+            <dependency>
+                <groupId>com.ibm.mq</groupId>
+                <artifactId>com.ibm.mq.jakarta.client</artifactId>
+                <version>${ibm.mq.jakarta.version}</version>
             </dependency>
 
             <!-- Oracle JDBC -->
