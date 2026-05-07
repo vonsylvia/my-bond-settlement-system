@@ -11,8 +11,9 @@
            http://www.springframework.org/schema/context
            http://www.springframework.org/schema/context/spring-context.xsd">
 
-    <!-- Scan only controllers -->
+    <!-- Scan controllers and config classes -->
     <context:component-scan base-package="com.settlement.controller"/>
+    <context:component-scan base-package="com.settlement.config"/>
 
     <!-- Enable MVC annotations (@RequestMapping, @Valid, etc.) -->
     <mvc:annotation-driven>
@@ -33,17 +34,5 @@
                      max-age="3600"/>
     </mvc:cors>
 
-    <!-- Jackson ObjectMapper with Java 8 date/time support -->
-    <bean id="objectMapper" class="com.fasterxml.jackson.databind.ObjectMapper">
-        <property name="serializationInclusion" value="NON_NULL"/>
-    </bean>
-
-    <bean class="org.springframework.beans.factory.config.MethodInvokingFactoryBean">
-        <property name="targetObject" ref="objectMapper"/>
-        <property name="targetMethod" value="registerModule"/>
-        <property name="arguments">
-            <bean class="com.fasterxml.jackson.datatype.jsr310.JavaTimeModule"/>
-        </property>
-    </bean>
 
 </beans>

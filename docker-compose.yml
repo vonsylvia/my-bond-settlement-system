@@ -6,6 +6,7 @@ services:
     image: gvenzl/oracle-xe:21-slim
     container_name: settlement-oracle
     environment:
+      TZ: Asia/Shanghai
       ORACLE_PASSWORD: settlement123
       APP_USER: settlement
       APP_USER_PASSWORD: settlement123
@@ -59,6 +60,8 @@ services:
       ibmmq:
         condition: service_healthy
     environment:
+      TZ: Asia/Shanghai
+      JVM_ARGS: -Duser.timezone=Asia/Shanghai
       ORACLE_HOST: oracle
       ORACLE_PORT: 1521
       MQ_HOST: ibmmq

@@ -67,9 +67,17 @@ export default {
     formatNumber(val) {
       return Number(val).toLocaleString('en-US', { minimumFractionDigits: 2 })
     },
-    formatDate(dateStr) {
-      if (!dateStr) return ''
-      return new Date(dateStr).toLocaleDateString('en-US', {
+    formatDate(val) {
+      if (!val) return ''
+      let date
+      if (Array.isArray(val)) {
+        const [y, m, d, h = 0, min = 0, s = 0] = val
+        date = new Date(y, m - 1, d, h, min, s)
+      } else {
+        date = new Date(val)
+      }
+      if (isNaN(date.getTime())) return ''
+      return date.toLocaleDateString('en-US', {
         month: 'short', day: 'numeric', year: 'numeric',
         hour: '2-digit', minute: '2-digit'
       })

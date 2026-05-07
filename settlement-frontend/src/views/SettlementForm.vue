@@ -36,7 +36,7 @@
           </div>
           <div class="form-group">
             <label for="settlementDate">Settlement Date</label>
-            <input id="settlementDate" v-model="form.settlementDate" type="date" required />
+            <input id="settlementDate" v-model="form.settlementDate" type="date" lang="en" required />
           </div>
         </div>
 
