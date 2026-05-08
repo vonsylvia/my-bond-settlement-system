@@ -1,36 +1,33 @@
 package com.settlement.config;
 
-import com.ibm.mq.jakarta.jms.MQQueueConnectionFactory;
-import com.ibm.msg.client.jakarta.wmq.common.CommonConstants;
+import jakarta.jms.ConnectionFactory;
+import javax.naming.InitialContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.jms.connection.UserCredentialsConnectionFactoryAdapter;
 import org.springframework.jms.core.JmsTemplate;
 
-import jakarta.jms.ConnectionFactory;
-
 /**
- * IBM MQ client configuration for outbound message sending.
- * Inbound message receiving is handled by {@code SwiftReplyMDB} (Message-Driven Bean)
+ * IBM MQ JMS configuration for outbound message sending.
+ *
+ * <p>Uses a container-managed JNDI ConnectionFactory ({@code jms/SwiftQueueCF})
+ * so that JMS operations participate in the same JTA transaction as database
+ * operations, ensuring atomic consistency via XA two-phase commit.
+ *
+ * <p>Inbound message receiving is handled by {@code SwiftReplyMDB} (Message-Driven Bean)
  * in the settlement-ejb module, activated via the container's JCA activation spec.
  */
 @Configuration
 public class MqClientConfig {
 
+    private static final Logger log = LoggerFactory.getLogger(MqClientConfig.class);
+
     @Bean(name = "jmsConnectionFactory")
     public ConnectionFactory jmsConnectionFactory() throws Exception {
-        MQQueueConnectionFactory target = new MQQueueConnectionFactory();
-        target.setHostName(env("MQ_HOST", "localhost"));
-        target.setPort(Integer.parseInt(env("MQ_PORT", "1414")));
-        target.setQueueManager(env("MQ_QUEUE_MANAGER", "SETTLEMENT_QM"));
-        target.setChannel(env("MQ_CHANNEL", "SETTLEMENT.SVRCONN"));
-        target.setTransportType(CommonConstants.WMQ_CM_CLIENT);
-
-        UserCredentialsConnectionFactoryAdapter adapter = new UserCredentialsConnectionFactoryAdapter();
-        adapter.setTargetConnectionFactory(target);
-        adapter.setUsername(env("MQ_USER", "app"));
-        adapter.setPassword(env("MQ_PASSWORD", "passw0rd"));
-        return adapter;
+        ConnectionFactory cf = InitialContext.doLookup("jms/SwiftQueueCF");
+        log.info("JNDI lookup successful: jms/SwiftQueueCF → {}", cf.getClass().getName());
+        return cf;
     }
 
     @Bean(name = "jmsTemplate")
@@ -38,13 +35,10 @@ public class MqClientConfig {
         JmsTemplate template = new JmsTemplate(jmsConnectionFactory);
         template.setDefaultDestinationName("SWIFT.SEND.QUEUE");
         template.setDeliveryPersistent(true);
-        template.setSessionTransacted(true);
         template.setReceiveTimeout(5000);
+        // sessionTransacted is intentionally NOT set (defaults to false).
+        // The JTA transaction manager coordinates commit/rollback across
+        // both Oracle DB and IBM MQ via XA two-phase commit.
         return template;
-    }
-
-    private String env(String key, String defaultValue) {
-        String value = System.getenv(key);
-        return value == null || value.isBlank() ? defaultValue : value;
     }
 }
