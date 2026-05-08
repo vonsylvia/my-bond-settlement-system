@@ -13,9 +13,9 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -45,13 +45,20 @@ class SettlementServiceTest {
     @Mock
     private SwiftMessageSender messageSender;
 
-    @InjectMocks
+    @SuppressWarnings("unchecked")
+    @Mock
+    private ObjectProvider<SwiftMessageSender> messageSenderProvider;
+
     private SettlementService settlementService;
 
     private SettlementRequest validRequest;
 
     @BeforeEach
     void setUp() {
+        lenient().when(messageSenderProvider.getObject()).thenReturn(messageSender);
+        settlementService = new SettlementService(
+                instructionDao, holdingDao, auditLogDao, messageBuilder, messageSenderProvider);
+
         validRequest = new SettlementRequest();
         validRequest.setIsin("US0378331005");
         validRequest.setSettlementDate(LocalDate.of(2026, 5, 15));
