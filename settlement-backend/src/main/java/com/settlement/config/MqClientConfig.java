@@ -2,16 +2,18 @@ package com.settlement.config;
 
 import com.ibm.mq.jakarta.jms.MQQueueConnectionFactory;
 import com.ibm.msg.client.jakarta.wmq.common.CommonConstants;
-import com.settlement.jms.SwiftReplyListener;
-import com.settlement.reconcile.ReconciliationService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jms.connection.UserCredentialsConnectionFactoryAdapter;
 import org.springframework.jms.core.JmsTemplate;
-import org.springframework.jms.listener.DefaultMessageListenerContainer;
 
 import jakarta.jms.ConnectionFactory;
 
+/**
+ * IBM MQ client configuration for outbound message sending.
+ * Inbound message receiving is handled by {@code SwiftReplyMDB} (Message-Driven Bean)
+ * in the settlement-ejb module, activated via the container's JCA activation spec.
+ */
 @Configuration
 public class MqClientConfig {
 
@@ -39,26 +41,6 @@ public class MqClientConfig {
         template.setSessionTransacted(true);
         template.setReceiveTimeout(5000);
         return template;
-    }
-
-    @Bean
-    public SwiftReplyListener swiftReplyListener(ReconciliationService reconciliationService) {
-        return new SwiftReplyListener(reconciliationService);
-    }
-
-    @Bean(name = "replyListenerContainer")
-    public DefaultMessageListenerContainer replyListenerContainer(
-            ConnectionFactory jmsConnectionFactory,
-            SwiftReplyListener swiftReplyListener) {
-        DefaultMessageListenerContainer container = new DefaultMessageListenerContainer();
-        container.setConnectionFactory(jmsConnectionFactory);
-        container.setDestinationName("SWIFT.REPLY.QUEUE");
-        container.setMessageListener(swiftReplyListener);
-        container.setSessionTransacted(true);
-        container.setConcurrentConsumers(1);
-        container.setMaxConcurrentConsumers(3);
-        container.setReceiveTimeout(5000);
-        return container;
     }
 
     private String env(String key, String defaultValue) {

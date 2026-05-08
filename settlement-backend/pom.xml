@@ -15,6 +15,13 @@
     <name>Bond Settlement System - Backend WAR</name>
 
     <dependencies>
+        <!-- Shared common library -->
+        <dependency>
+            <groupId>com.settlement</groupId>
+            <artifactId>settlement-common</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+
         <!-- Spring Framework -->
         <dependency>
             <groupId>org.springframework</groupId>

@@ -2,10 +2,9 @@
 <server description="Bond Settlement System - Liberty Server">
 
     <!--
-        Feature set: excludes messagingServer-3.0 to avoid Liberty's internal SIBus
-        intercepting JMS destinations. messagingClient-3.0 provides the JMS API.
-        Actual MQ listening is handled by Spring DefaultMessageListenerContainer
-        in the WAR module (see MqClientConfig.java).
+        Message receiving is handled by SwiftReplyMDB (Message-Driven Bean) in the
+        EJB module, activated via IBM MQ Resource Adapter's JCA activation spec.
+        Message sending uses Spring JmsTemplate with application-managed MQ client.
     -->
     <featureManager>
         <feature>servlet-6.0</feature>
@@ -18,6 +17,7 @@
         <feature>jndi-1.0</feature>
         <feature>transportSecurity-1.0</feature>
         <feature>messagingClient-3.0</feature>
+        <feature>mdb-4.0</feature>
         <feature>localConnector-1.0</feature>
     </featureManager>
 
@@ -47,7 +47,53 @@
         <connectionManager maxPoolSize="20" minPoolSize="5" connectionTimeout="30s"/>
     </dataSource>
 
-    <!-- Application (EAR with WAR + EJB modules) -->
+    <!-- ==================== IBM MQ Resource Adapter ==================== -->
+    <resourceAdapter id="mqJmsRa"
+                     location="${server.config.dir}/resources/wmq/wmq.jakarta.jmsra.rar">
+        <classloader apiTypeVisibility="spec, ibm-api, third-party"/>
+    </resourceAdapter>
+
+    <!-- JMS Queue Connection Factory (container-managed, used by MDB and JNDI lookups) -->
+    <jmsQueueConnectionFactory id="swiftQueueCF"
+                               jndiName="jms/SwiftQueueCF"
+                               connectionManagerRef="mqConnectionManager">
+        <properties.mqJmsRa
+            hostName="${env.MQ_HOST}"
+            port="${env.MQ_PORT}"
+            channel="SETTLEMENT.SVRCONN"
+            queueManager="SETTLEMENT_QM"
+            transportType="CLIENT"
+            userName="app"
+            password="passw0rd"/>
+    </jmsQueueConnectionFactory>
+
+    <connectionManager id="mqConnectionManager" maxPoolSize="20" minPoolSize="2"/>
+
+    <!-- JMS Queue: outgoing MT541 messages -->
+    <jmsQueue id="swiftSendQueue" jndiName="jms/SwiftSendQueue">
+        <properties.mqJmsRa baseQueueName="SWIFT.SEND.QUEUE"/>
+    </jmsQueue>
+
+    <!-- JMS Queue: incoming MT548 replies -->
+    <jmsQueue id="swiftReplyQueue" jndiName="jms/SwiftReplyQueue">
+        <properties.mqJmsRa baseQueueName="SWIFT.REPLY.QUEUE"/>
+    </jmsQueue>
+
+    <!-- JMS Activation Spec for SwiftReplyMDB -->
+    <jmsActivationSpec id="jms/SwiftReplyActivationSpec">
+        <properties.mqJmsRa
+            hostName="${env.MQ_HOST}"
+            port="${env.MQ_PORT}"
+            channel="SETTLEMENT.SVRCONN"
+            queueManager="SETTLEMENT_QM"
+            transportType="CLIENT"
+            destination="SWIFT.REPLY.QUEUE"
+            destinationType="jakarta.jms.Queue"
+            userName="app"
+            password="passw0rd"/>
+    </jmsActivationSpec>
+
+    <!-- ==================== Application ==================== -->
     <enterpriseApplication id="bond-settlement"
                            location="bond-settlement.ear"
                            name="bond-settlement">
@@ -56,6 +102,6 @@
 
     <!-- Logging -->
     <logging consoleLogLevel="INFO"
-             traceSpecification="com.settlement.*=fine"/>
+             traceSpecification="com.settlement.*=fine:com.ibm.mq.*=info"/>
 
 </server>

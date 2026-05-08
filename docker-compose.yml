@@ -43,9 +43,11 @@ services:
       timeout: 5s
       retries: 5
 
-  # WebSphere Liberty (for local deployment testing)
+  # WebSphere Liberty (with IBM MQ Resource Adapter for MDB activation)
   liberty:
-    image: icr.io/appcafe/websphere-liberty:24.0.0.12-full-java21-openj9-ubi-minimal
+    build:
+      context: .
+      dockerfile: docker/liberty/Dockerfile
     container_name: settlement-liberty
     ports:
       - "9080:9080"

@@ -11,6 +11,7 @@
     <name>Bond Settlement System - Parent</name>
 
     <modules>
+        <module>settlement-common</module>
         <module>settlement-backend</module>
         <module>settlement-ejb</module>
         <module>settlement-ear</module>

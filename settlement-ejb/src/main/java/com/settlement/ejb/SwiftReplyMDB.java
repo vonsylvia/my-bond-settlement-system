@@ -1,5 +1,6 @@
 package com.settlement.ejb;
 
+import com.settlement.bridge.ServiceRegistry;
 import jakarta.annotation.Resource;
 import jakarta.ejb.ActivationConfigProperty;
 import jakarta.ejb.MessageDriven;
@@ -10,14 +11,15 @@ import jakarta.jms.MessageListener;
 import jakarta.jms.TextMessage;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.web.context.ContextLoader;
-import org.springframework.web.context.WebApplicationContext;
 
 import java.lang.reflect.Method;
 
 /**
  * Message-Driven Bean that listens on the SWIFT reply queue for MT548
  * (Settlement Status and Processing Advice) messages from SWIFT Alliance Gateway.
+ *
+ * <p>Uses {@link ServiceRegistry} to obtain Spring-managed ReconciliationService
+ * without direct Spring classloader dependency, enabling clean EAR module isolation.
  */
 @MessageDriven(
     name = "SwiftReplyMDB",
@@ -56,9 +58,9 @@ public class SwiftReplyMDB implements MessageListener {
 
             log.info("Received SWIFT reply: correlationId={}, type={}", correlationId, messageType);
 
-            Object reconciliationService = getReconciliationService();
+            Object reconciliationService = ServiceRegistry.lookup("reconciliationService", Object.class);
             if (reconciliationService == null) {
-                log.error("ReconciliationService not available, rolling back message");
+                log.error("ReconciliationService not available via ServiceRegistry, rolling back message");
                 mdbContext.setRollbackOnly();
                 return;
             }
@@ -72,14 +74,6 @@ public class SwiftReplyMDB implements MessageListener {
             log.error("Unexpected error in MDB processing", e);
             mdbContext.setRollbackOnly();
         }
-    }
-
-    private Object getReconciliationService() {
-        WebApplicationContext ctx = ContextLoader.getCurrentWebApplicationContext();
-        if (ctx == null) {
-            return null;
-        }
-        return ctx.getBean("reconciliationService");
     }
 
     private void invokeProcessSwiftReply(Object reconciliationService, String correlationId, String messageBody) throws Exception {
