@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<web-bnd xmlns="http://websphere.ibm.com/xml/ns/javaee"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://websphere.ibm.com/xml/ns/javaee
+                             http://websphere.ibm.com/xml/ns/javaee/ibm-web-bnd_1_2.xsd"
+         version="1.2">
+
+    <virtual-host name="default_host"/>
+
+    <!-- DataSource binding -->
+    <resource-ref name="jdbc/OracleDS" binding-name="jdbc/OracleDS"/>
+
+    <!-- JMS ConnectionFactory binding -->
+    <resource-ref name="jms/SwiftQueueCF" binding-name="jms/SwiftQueueCF"/>
+
+    <!-- JMS Queue bindings -->
+    <resource-ref name="jms/SwiftSendQueue" binding-name="jms/SwiftSendQueue"/>
+    <resource-ref name="jms/SwiftReplyQueue" binding-name="jms/SwiftReplyQueue"/>
+
+</web-bnd>

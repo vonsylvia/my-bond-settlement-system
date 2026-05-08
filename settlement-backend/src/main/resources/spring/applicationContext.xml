@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:context="http://www.springframework.org/schema/context"
+       xmlns:tx="http://www.springframework.org/schema/tx"
+       xmlns:jee="http://www.springframework.org/schema/jee"
+       xsi:schemaLocation="
+           http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans.xsd
+           http://www.springframework.org/schema/context
+           http://www.springframework.org/schema/context/spring-context.xsd
+           http://www.springframework.org/schema/tx
+           http://www.springframework.org/schema/tx/spring-tx.xsd
+           http://www.springframework.org/schema/jee
+           http://www.springframework.org/schema/jee/spring-jee.xsd">
+
+    <!-- Component scanning (exclude controllers, handled by MVC config) -->
+    <context:annotation-config/>
+    <bean class="org.springframework.orm.jpa.support.PersistenceAnnotationBeanPostProcessor"/>
+    <context:component-scan base-package="com.settlement">
+        <context:exclude-filter type="annotation"
+                                expression="org.springframework.stereotype.Controller"/>
+        <context:exclude-filter type="regex"
+                                expression="com\\.settlement\\.ejb\\..*"/>
+    </context:component-scan>
+
+    <!-- JNDI DataSource from WebSphere -->
+    <jee:jndi-lookup id="dataSource" jndi-name="jdbc/OracleDS" expected-type="javax.sql.DataSource"/>
+
+    <!-- JPA EntityManagerFactory (JTA-managed for EAR/MDB compatibility) -->
+    <bean id="entityManagerFactory"
+          class="org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean">
+        <property name="jtaDataSource" ref="dataSource"/>
+        <property name="packagesToScan" value="com.settlement.entity"/>
+        <property name="jpaVendorAdapter">
+            <bean class="org.springframework.orm.jpa.vendor.HibernateJpaVendorAdapter">
+                <property name="database" value="ORACLE"/>
+                <property name="showSql" value="false"/>
+            </bean>
+        </property>
+        <property name="jpaProperties">
+            <props>
+                <prop key="hibernate.dialect">org.hibernate.dialect.OracleDialect</prop>
+                <prop key="hibernate.hbm2ddl.auto">validate</prop>
+                <prop key="hibernate.format_sql">true</prop>
+                <prop key="hibernate.transaction.jta.platform">org.hibernate.engine.transaction.jta.platform.internal.WebSphereLibertyJtaPlatform</prop>
+            </props>
+        </property>
+    </bean>
+
+    <!-- JTA Transaction Manager: participates in container-managed transactions (MDB) -->
+    <bean id="transactionManager" class="org.springframework.transaction.jta.JtaTransactionManager"/>
+
+    <!-- Enable @Transactional -->
+    <tx:annotation-driven transaction-manager="transactionManager"/>
+
+</beans>

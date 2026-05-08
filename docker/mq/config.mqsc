@@ -1,0 +1,37 @@
+* IBM MQ Configuration for Bond Settlement System
+* This MQSC file is executed when the container starts
+
+* Define the queues for SWIFT message exchange
+DEFINE QLOCAL('SWIFT.SEND.QUEUE') REPLACE +
+    DEFPSIST(YES) +
+    MAXDEPTH(10000) +
+    DESCR('Queue for outgoing MT541 messages to SWIFT Alliance Gateway')
+
+DEFINE QLOCAL('SWIFT.REPLY.QUEUE') REPLACE +
+    DEFPSIST(YES) +
+    MAXDEPTH(10000) +
+    DESCR('Queue for incoming MT548 replies from SWIFT Alliance Gateway')
+
+* Dead letter queue for failed messages
+DEFINE QLOCAL('SWIFT.DLQ') REPLACE +
+    DEFPSIST(YES) +
+    MAXDEPTH(50000) +
+    DESCR('Dead letter queue for settlement messages')
+
+ALTER QMGR DEADQ('SWIFT.DLQ')
+
+* Channel for application connections
+DEFINE CHANNEL('SETTLEMENT.SVRCONN') CHLTYPE(SVRCONN) REPLACE +
+    TRPTYPE(TCP) +
+    MCAUSER('app') +
+    DESCR('Server connection channel for settlement application')
+
+* Channel authentication - allow app connections
+SET CHLAUTH('SETTLEMENT.SVRCONN') TYPE(BLOCKUSER) USERLIST('nobody') ACTION(REPLACE)
+SET CHLAUTH('*') TYPE(ADDRESSMAP) ADDRESS('*') USERSRC(CHANNEL) ACTION(REPLACE)
+
+* Listener (usually default, but explicit for clarity)
+* DEFINE LISTENER('SETTLEMENT.LISTENER') TRPTYPE(TCP) PORT(1414) REPLACE
+* START LISTENER('SETTLEMENT.LISTENER')
+
+REFRESH SECURITY

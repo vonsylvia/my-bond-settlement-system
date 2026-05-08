@@ -1,0 +1,31 @@
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Maven
+target/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node.js
+settlement-frontend/node_modules/
+settlement-frontend/dist/
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+
+# Docker - large binary artifacts (downloaded at build time)
+docker/liberty/wmq.jakarta.jmsra.rar
+docker/liberty/mq-jms/
+docker/liberty/jdbc/
+
+# Docker volumes
+oracle-data/
+mq-data/
