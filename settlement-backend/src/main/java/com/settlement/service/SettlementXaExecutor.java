@@ -8,7 +8,6 @@ import com.settlement.entity.SettlementInstruction;
 import com.settlement.jms.SwiftMessageSender;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,14 +25,14 @@ public class SettlementXaExecutor {
 
     private final SettlementInstructionDao instructionDao;
     private final AuditLogDao auditLogDao;
-    private final ObjectProvider<SwiftMessageSender> messageSenderProvider;
+    private final SwiftMessageSender messageSender;
 
     public SettlementXaExecutor(SettlementInstructionDao instructionDao,
                                 AuditLogDao auditLogDao,
-                                ObjectProvider<SwiftMessageSender> messageSenderProvider) {
+                                SwiftMessageSender messageSender) {
         this.instructionDao = instructionDao;
         this.auditLogDao = auditLogDao;
-        this.messageSenderProvider = messageSenderProvider;
+        this.messageSender = messageSender;
     }
 
     /**
@@ -60,8 +59,7 @@ public class SettlementXaExecutor {
         instruction.setStatus(InstructionStatus.SUBMITTING);
         instructionDao.save(instruction);
 
-        messageSenderProvider.getObject()
-                .sendSwiftMessage(tradeRef, instruction.getMt541Raw());
+        messageSender.sendSwiftMessage(tradeRef, instruction.getMt541Raw());
 
         instruction.setStatus(InstructionStatus.SENT);
         instruction.setFailureReason(null);

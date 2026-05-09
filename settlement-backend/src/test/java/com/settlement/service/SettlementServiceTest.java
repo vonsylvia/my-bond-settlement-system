@@ -15,8 +15,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.beans.factory.ObjectProvider;
-
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Optional;
@@ -44,19 +42,14 @@ class SettlementServiceTest {
     @Mock
     private AsyncSettlementProcessor asyncProcessor;
 
-    @SuppressWarnings("unchecked")
-    @Mock
-    private ObjectProvider<AsyncSettlementProcessor> asyncProcessorProvider;
-
     private SettlementService settlementService;
 
     private SettlementRequest validRequest;
 
     @BeforeEach
     void setUp() {
-        lenient().when(asyncProcessorProvider.getObject()).thenReturn(asyncProcessor);
         settlementService = new SettlementService(
-                instructionDao, holdingDao, auditLogDao, messageBuilder, asyncProcessorProvider);
+                instructionDao, holdingDao, auditLogDao, messageBuilder, asyncProcessor);
 
         validRequest = new SettlementRequest();
         validRequest.setIsin("US0378331005");

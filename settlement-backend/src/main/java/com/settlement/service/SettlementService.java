@@ -10,7 +10,6 @@ import com.settlement.exception.BusinessException;
 import com.settlement.exception.ResourceNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,18 +25,18 @@ public class SettlementService {
     private final BondHoldingDao holdingDao;
     private final AuditLogDao auditLogDao;
     private final SwiftMessageBuilder messageBuilder;
-    private final ObjectProvider<AsyncSettlementProcessor> asyncProcessorProvider;
+    private final AsyncSettlementProcessor asyncProcessor;
 
     public SettlementService(SettlementInstructionDao instructionDao,
                              BondHoldingDao holdingDao,
                              AuditLogDao auditLogDao,
                              SwiftMessageBuilder messageBuilder,
-                             ObjectProvider<AsyncSettlementProcessor> asyncProcessorProvider) {
+                             AsyncSettlementProcessor asyncProcessor) {
         this.instructionDao = instructionDao;
         this.holdingDao = holdingDao;
         this.auditLogDao = auditLogDao;
         this.messageBuilder = messageBuilder;
-        this.asyncProcessorProvider = asyncProcessorProvider;
+        this.asyncProcessor = asyncProcessor;
     }
 
     /**
@@ -72,7 +71,7 @@ public class SettlementService {
         log.info("Settlement instruction created: tradeRef={}, ISIN={}, direction={} — async send queued",
                 tradeRef, request.getIsin(), request.getDirection());
 
-        asyncProcessorProvider.getObject().processSettlementAsync(tradeRef);
+        asyncProcessor.processSettlementAsync(tradeRef);
 
         return instruction;
     }
@@ -109,7 +108,7 @@ public class SettlementService {
 
         log.info("Manual retry triggered: tradeRef={}", tradeRef);
 
-        asyncProcessorProvider.getObject().processSettlementAsync(tradeRef);
+        asyncProcessor.processSettlementAsync(tradeRef);
 
         return instruction;
     }
