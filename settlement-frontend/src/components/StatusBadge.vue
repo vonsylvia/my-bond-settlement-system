@@ -15,6 +15,7 @@ export default {
     statusClass() {
       switch (this.status) {
         case 'PENDING': return 'pending'
+        case 'SUBMITTING': return 'submitting'
         case 'SENT': return 'sent'
         case 'MATCHED': return 'matched'
         case 'FAILED': return 'failed'
@@ -40,6 +41,11 @@ export default {
 .status-badge.pending {
   background: #fff3e0;
   color: #e65100;
+}
+
+.status-badge.submitting {
+  background: #e8eaf6;
+  color: #283593;
 }
 
 .status-badge.sent {

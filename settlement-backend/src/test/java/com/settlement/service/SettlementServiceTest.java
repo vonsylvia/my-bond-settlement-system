@@ -7,16 +7,14 @@ import com.settlement.dto.SettlementRequest;
 import com.settlement.entity.Direction;
 import com.settlement.entity.InstructionStatus;
 import com.settlement.entity.SettlementInstruction;
+import com.settlement.exception.BusinessException;
 import com.settlement.exception.ResourceNotFoundException;
-import com.settlement.jms.SwiftMessageSender;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.beans.factory.ObjectProvider;
-
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Optional;
@@ -24,7 +22,6 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -43,11 +40,7 @@ class SettlementServiceTest {
     private SwiftMessageBuilder messageBuilder;
 
     @Mock
-    private SwiftMessageSender messageSender;
-
-    @SuppressWarnings("unchecked")
-    @Mock
-    private ObjectProvider<SwiftMessageSender> messageSenderProvider;
+    private AsyncSettlementProcessor asyncProcessor;
 
     private SettlementService settlementService;
 
@@ -55,9 +48,8 @@ class SettlementServiceTest {
 
     @BeforeEach
     void setUp() {
-        lenient().when(messageSenderProvider.getObject()).thenReturn(messageSender);
         settlementService = new SettlementService(
-                instructionDao, holdingDao, auditLogDao, messageBuilder, messageSenderProvider);
+                instructionDao, holdingDao, auditLogDao, messageBuilder, asyncProcessor);
 
         validRequest = new SettlementRequest();
         validRequest.setIsin("US0378331005");
@@ -70,7 +62,7 @@ class SettlementServiceTest {
     }
 
     @Test
-    void submitInstruction_shouldPersistAndSendMessage() {
+    void submitInstruction_shouldPersistWithPendingStatus() {
         when(messageBuilder.buildMT541(any())).thenReturn("{MT541 content}");
         when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -79,13 +71,23 @@ class SettlementServiceTest {
         assertThat(result).isNotNull();
         assertThat(result.getIsin()).isEqualTo("US0378331005");
         assertThat(result.getDirection()).isEqualTo(Direction.BUY);
-        assertThat(result.getStatus()).isEqualTo(InstructionStatus.SENT);
+        assertThat(result.getStatus()).isEqualTo(InstructionStatus.PENDING);
         assertThat(result.getTradeRef()).startsWith("TR-");
+        assertThat(result.getMt541Raw()).isEqualTo("{MT541 content}");
 
-        verify(instructionDao, times(3)).save(any(SettlementInstruction.class));
+        verify(instructionDao).save(any(SettlementInstruction.class));
         verify(messageBuilder).buildMT541(any());
-        verify(messageSender).sendSwiftMessage(anyString(), eq("{MT541 content}"));
         verify(auditLogDao).save(any());
+    }
+
+    @Test
+    void submitInstruction_shouldTriggerAsyncProcessing() {
+        when(messageBuilder.buildMT541(any())).thenReturn("{MT541}");
+        when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        SettlementInstruction result = settlementService.submitInstruction(validRequest);
+
+        verify(asyncProcessor).processSettlementAsync(result.getTradeRef());
     }
 
     @Test
@@ -125,12 +127,47 @@ class SettlementServiceTest {
         when(messageBuilder.buildMT541(any())).thenReturn(mt541Content);
         when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        ArgumentCaptor<SettlementInstruction> captor = ArgumentCaptor.forClass(SettlementInstruction.class);
+        SettlementInstruction result = settlementService.submitInstruction(validRequest);
 
-        settlementService.submitInstruction(validRequest);
+        assertThat(result.getMt541Raw()).isEqualTo(mt541Content);
+    }
 
-        verify(instructionDao, times(3)).save(captor.capture());
-        SettlementInstruction savedWithMt541 = captor.getAllValues().get(1);
-        assertThat(savedWithMt541.getMt541Raw()).isEqualTo(mt541Content);
+    @Test
+    void manualRetry_shouldResetFailedInstruction() {
+        SettlementInstruction instruction = new SettlementInstruction();
+        instruction.setTradeRef("TR-RETRY001");
+        instruction.setStatus(InstructionStatus.FAILED);
+        instruction.setRetryCount(3);
+        instruction.setFailureReason("Connection refused");
+        when(instructionDao.findByTradeRef("TR-RETRY001")).thenReturn(Optional.of(instruction));
+        when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        SettlementInstruction result = settlementService.manualRetry("TR-RETRY001");
+
+        assertThat(result.getStatus()).isEqualTo(InstructionStatus.PENDING);
+        assertThat(result.getRetryCount()).isZero();
+        assertThat(result.getFailureReason()).isNull();
+        verify(asyncProcessor).processSettlementAsync("TR-RETRY001");
+        verify(auditLogDao).save(any());
+    }
+
+    @Test
+    void manualRetry_shouldRejectNonFailedInstruction() {
+        SettlementInstruction instruction = new SettlementInstruction();
+        instruction.setTradeRef("TR-SENT001");
+        instruction.setStatus(InstructionStatus.SENT);
+        when(instructionDao.findByTradeRef("TR-SENT001")).thenReturn(Optional.of(instruction));
+
+        assertThatThrownBy(() -> settlementService.manualRetry("TR-SENT001"))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("SENT");
+    }
+
+    @Test
+    void manualRetry_shouldThrowWhenNotFound() {
+        when(instructionDao.findByTradeRef("TR-NONE")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> settlementService.manualRetry("TR-NONE"))
+                .isInstanceOf(ResourceNotFoundException.class);
     }
 }

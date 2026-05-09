@@ -1,16 +1,15 @@
 package com.settlement.service;
 
-import com.settlement.dao.BondHoldingDao;
 import com.settlement.dao.AuditLogDao;
+import com.settlement.dao.BondHoldingDao;
 import com.settlement.dao.SettlementInstructionDao;
 import com.settlement.dto.HoldingResponse;
 import com.settlement.dto.SettlementRequest;
 import com.settlement.entity.*;
+import com.settlement.exception.BusinessException;
 import com.settlement.exception.ResourceNotFoundException;
-import com.settlement.jms.SwiftMessageSender;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,20 +25,25 @@ public class SettlementService {
     private final BondHoldingDao holdingDao;
     private final AuditLogDao auditLogDao;
     private final SwiftMessageBuilder messageBuilder;
-    private final ObjectProvider<SwiftMessageSender> messageSenderProvider;
+    private final AsyncSettlementProcessor asyncProcessor;
 
     public SettlementService(SettlementInstructionDao instructionDao,
                              BondHoldingDao holdingDao,
                              AuditLogDao auditLogDao,
                              SwiftMessageBuilder messageBuilder,
-                             ObjectProvider<SwiftMessageSender> messageSenderProvider) {
+                             AsyncSettlementProcessor asyncProcessor) {
         this.instructionDao = instructionDao;
         this.holdingDao = holdingDao;
         this.auditLogDao = auditLogDao;
         this.messageBuilder = messageBuilder;
-        this.messageSenderProvider = messageSenderProvider;
+        this.asyncProcessor = asyncProcessor;
     }
 
+    /**
+     * Phase 1 (synchronous): validate, persist instruction with PENDING status,
+     * build MT541 message, then trigger async XA processing.
+     * Returns immediately after DB save — no JMS involved.
+     */
     @Transactional
     public SettlementInstruction submitInstruction(SettlementRequest request) {
         String tradeRef = generateTradeRef();
@@ -55,22 +59,19 @@ public class SettlementService {
         instruction.setAccountId(request.getAccountId());
         instruction.setStatus(InstructionStatus.PENDING);
 
-        instructionDao.save(instruction);
-
         String mt541Message = messageBuilder.buildMT541(instruction);
         instruction.setMt541Raw(mt541Message);
+
         instructionDao.save(instruction);
 
-        messageSenderProvider.getObject().sendSwiftMessage(tradeRef, mt541Message);
+        auditLogDao.save(new AuditLog(tradeRef, "INSTRUCTION_CREATED",
+                "Instruction saved, async XA processing queued. ISIN=" + request.getIsin()
+                        + " QTY=" + request.getQuantity()));
 
-        instruction.setStatus(InstructionStatus.SENT);
-        instructionDao.save(instruction);
-
-        auditLogDao.save(new AuditLog(tradeRef, "INSTRUCTION_SENT",
-                "MT541 sent for ISIN=" + request.getIsin() + " QTY=" + request.getQuantity()));
-
-        log.info("Settlement instruction submitted: tradeRef={}, ISIN={}, direction={}",
+        log.info("Settlement instruction created: tradeRef={}, ISIN={}, direction={} — async send queued",
                 tradeRef, request.getIsin(), request.getDirection());
+
+        asyncProcessor.processSettlementAsync(tradeRef);
 
         return instruction;
     }
@@ -80,6 +81,36 @@ public class SettlementService {
         return instructionDao.findByTradeRef(tradeRef)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Settlement instruction not found: " + tradeRef));
+    }
+
+    /**
+     * Reset a FAILED instruction back to PENDING and trigger async retry.
+     */
+    @Transactional
+    public SettlementInstruction manualRetry(String tradeRef) {
+        SettlementInstruction instruction = instructionDao.findByTradeRef(tradeRef)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Settlement instruction not found: " + tradeRef));
+
+        if (instruction.getStatus() != InstructionStatus.FAILED) {
+            throw new BusinessException(
+                    "Cannot retry instruction in status " + instruction.getStatus()
+                            + ". Only FAILED instructions can be retried.");
+        }
+
+        instruction.setStatus(InstructionStatus.PENDING);
+        instruction.setRetryCount(0);
+        instruction.setFailureReason(null);
+        instructionDao.save(instruction);
+
+        auditLogDao.save(new AuditLog(tradeRef, "MANUAL_RETRY",
+                "Manual retry triggered, status reset to PENDING"));
+
+        log.info("Manual retry triggered: tradeRef={}", tradeRef);
+
+        asyncProcessor.processSettlementAsync(tradeRef);
+
+        return instruction;
     }
 
     @Transactional

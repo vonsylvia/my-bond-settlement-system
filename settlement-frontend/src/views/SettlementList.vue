@@ -19,6 +19,7 @@
             <th>Settlement Date</th>
             <th>Status</th>
             <th>Created</th>
+            <th>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -37,9 +38,20 @@
               <StatusBadge :status="item.status" />
             </td>
             <td>{{ formatDate(item.createdAt) }}</td>
+            <td>
+              <button
+                v-if="item.status === 'FAILED'"
+                class="btn-retry"
+                :disabled="retryingRef === item.tradeRef"
+                @click="retryInstruction(item.tradeRef)"
+              >
+                {{ retryingRef === item.tradeRef ? 'Retrying...' : 'Retry' }}
+              </button>
+              <span v-else class="no-action">—</span>
+            </td>
           </tr>
           <tr v-if="instructions.length === 0">
-            <td colspan="8" class="empty">No settlement instructions found</td>
+            <td colspan="9" class="empty">No settlement instructions found</td>
           </tr>
         </tbody>
       </table>
@@ -54,7 +66,7 @@
 </template>
 
 <script>
-import { listSettlements } from '../api/settlement.js'
+import { listSettlements, retrySettlement } from '../api/settlement.js'
 import StatusBadge from '../components/StatusBadge.vue'
 
 export default {
@@ -64,6 +76,7 @@ export default {
     return {
       instructions: [],
       loading: false,
+      retryingRef: null,
       page: 0,
       size: 20,
       totalPages: 0
@@ -83,6 +96,18 @@ export default {
         console.error('Failed to load settlements', error)
       } finally {
         this.loading = false
+      }
+    },
+    async retryInstruction(tradeRef) {
+      this.retryingRef = tradeRef
+      try {
+        await retrySettlement(tradeRef)
+        await this.loadData()
+      } catch (error) {
+        console.error('Retry failed', error)
+        alert('Retry failed: ' + (error.response?.data?.message || error.message))
+      } finally {
+        this.retryingRef = null
       }
     },
     formatNumber(val) {
@@ -235,5 +260,30 @@ export default {
 .pagination button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.btn-retry {
+  padding: 0.3rem 0.7rem;
+  background: #ff5722;
+  color: #fff;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 600;
+  transition: background 0.2s;
+}
+
+.btn-retry:hover:not(:disabled) {
+  background: #e64a19;
+}
+
+.btn-retry:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.no-action {
+  color: #bbb;
 }
 </style>

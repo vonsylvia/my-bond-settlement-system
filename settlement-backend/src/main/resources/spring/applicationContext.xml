@@ -4,6 +4,7 @@
        xmlns:context="http://www.springframework.org/schema/context"
        xmlns:tx="http://www.springframework.org/schema/tx"
        xmlns:jee="http://www.springframework.org/schema/jee"
+       xmlns:task="http://www.springframework.org/schema/task"
        xsi:schemaLocation="
            http://www.springframework.org/schema/beans
            http://www.springframework.org/schema/beans/spring-beans.xsd
@@ -12,7 +13,13 @@
            http://www.springframework.org/schema/tx
            http://www.springframework.org/schema/tx/spring-tx.xsd
            http://www.springframework.org/schema/jee
-           http://www.springframework.org/schema/jee/spring-jee.xsd">
+           http://www.springframework.org/schema/jee/spring-jee.xsd
+           http://www.springframework.org/schema/task
+           http://www.springframework.org/schema/task/spring-task.xsd">
+
+    <!-- Load external properties -->
+    <context:property-placeholder location="classpath:settlement.properties"
+                                  ignore-unresolvable="true"/>
 
     <!-- Component scanning (exclude controllers, handled by MVC config) -->
     <context:annotation-config/>
@@ -53,5 +60,64 @@
 
     <!-- Enable @Transactional -->
     <tx:annotation-driven transaction-manager="transactionManager"/>
+
+    <!--
+        Dedicated executor for settlement retry processing.
+        Uses ThreadPoolTaskExecutor with explicit bounds to prevent unbounded thread
+        growth from long-running Thread.sleep backoff retries.
+
+        Async threads start fresh JTA transactions per @Transactional call, so
+        container-managed threads are not required here.
+
+        corePoolSize    : threads kept alive even when idle
+        maxPoolSize     : upper bound when queue is full
+        queueCapacity   : bounded queue; backpressure before spawning extra threads
+        keepAliveSeconds: idle non-core thread TTL
+    -->
+    <bean id="settlementExecutor"
+          class="org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor">
+        <property name="corePoolSize"     value="5"/>
+        <property name="maxPoolSize"      value="20"/>
+        <property name="queueCapacity"    value="100"/>
+        <property name="keepAliveSeconds" value="60"/>
+        <property name="threadNamePrefix" value="settlement-retry-"/>
+        <!--
+            CallerRunsPolicy: when queue is full, the submitting thread runs the task
+            directly instead of rejecting it. Provides backpressure without losing tasks.
+        -->
+        <property name="rejectedExecutionHandler">
+            <bean class="java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy"/>
+        </property>
+    </bean>
+
+    <!--
+        Dedicated executor for alert webhook HTTP calls.
+        Uses ThreadPoolTaskExecutor (not container-managed) because alerts
+        do not participate in JTA transactions.
+
+        corePoolSize    : threads kept alive even when idle
+        maxPoolSize     : upper bound when queue is full
+        queueCapacity   : bounded queue; backpressure before spawning extra threads
+        keepAliveSeconds: idle non-core thread TTL
+    -->
+    <bean id="alertExecutor"
+          class="org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor">
+        <property name="corePoolSize"     value="2"/>
+        <property name="maxPoolSize"      value="5"/>
+        <property name="queueCapacity"    value="50"/>
+        <property name="keepAliveSeconds" value="30"/>
+        <property name="threadNamePrefix" value="alert-webhook-"/>
+        <!--
+            DiscardPolicy: silently drop overflow alerts rather than blocking
+            the settlement retry thread. Alert loss is acceptable; task loss is not.
+        -->
+        <property name="rejectedExecutionHandler">
+            <bean class="java.util.concurrent.ThreadPoolExecutor.DiscardPolicy"/>
+        </property>
+    </bean>
+
+    <!-- Enable @Scheduled only; @Async replaced by explicit executor injection -->
+    <task:annotation-driven scheduler="retryScheduler"/>
+    <task:scheduler id="retryScheduler" pool-size="2"/>
 
 </beans>

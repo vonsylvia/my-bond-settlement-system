@@ -24,7 +24,14 @@ public class SettlementController {
     public ResponseEntity<SettlementResponse> createSettlement(@Valid @RequestBody SettlementRequest request) {
         SettlementInstruction instruction = settlementService.submitInstruction(request);
         SettlementResponse response = toResponse(instruction);
-        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
+    }
+
+    @PostMapping("/settlement/{tradeRef}/retry")
+    public ResponseEntity<SettlementResponse> retrySettlement(@PathVariable String tradeRef) {
+        SettlementInstruction instruction = settlementService.manualRetry(tradeRef);
+        SettlementResponse response = toResponse(instruction);
+        return ResponseEntity.status(HttpStatus.ACCEPTED).body(response);
     }
 
     @GetMapping("/settlement/{tradeRef}")
@@ -61,6 +68,8 @@ public class SettlementController {
         response.setDirection(instruction.getDirection().name());
         response.setStatus(instruction.getStatus().name());
         response.setAccountId(instruction.getAccountId());
+        response.setRetryCount(instruction.getRetryCount());
+        response.setFailureReason(instruction.getFailureReason());
         response.setCreatedAt(instruction.getCreatedAt());
         response.setUpdatedAt(instruction.getUpdatedAt());
         return response;

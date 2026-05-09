@@ -19,6 +19,10 @@ export function listSettlements(page = 0, size = 20) {
   return api.get('/settlement', { params: { page, size } })
 }
 
+export function retrySettlement(tradeRef) {
+  return api.post(`/settlement/${tradeRef}/retry`)
+}
+
 export function getHoldings(accountId) {
   const params = accountId ? { accountId } : {}
   return api.get('/holdings', { params })

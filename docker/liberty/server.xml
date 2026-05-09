@@ -19,6 +19,7 @@
         <feature>messagingClient-3.0</feature>
         <feature>mdb-4.0</feature>
         <feature>localConnector-1.0</feature>
+        <feature>concurrent-3.0</feature>
     </featureManager>
 
     <!-- Local user registry -->
@@ -26,6 +27,13 @@
         <user name="admin" password="admin123"/>
         <user name="app" password="passw0rd"/>
     </basicRegistry>
+
+    <!-- JTA Transaction: XA two-phase commit timeout -->
+    <transaction
+        totalTranLifetimeTimeout="30s"
+        propogatedOrBMTTranLifetimeTimeout="30s"
+        clientInactivityTimeout="10s"
+        LPSHeuristicCompletion="ROLLBACK"/>
 
     <!-- HTTP Endpoint -->
     <httpEndpoint id="defaultHttpEndpoint"
