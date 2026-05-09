@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -112,7 +113,7 @@ public class SettlementXaExecutor {
         List<SettlementInstruction> pending =
                 instructionDao.findByStatus(InstructionStatus.PENDING);
 
-        List<String> tradeRefs = new java.util.ArrayList<>();
+        List<String> tradeRefs = new ArrayList<>();
         for (SettlementInstruction instr : submitting) {
             tradeRefs.add(instr.getTradeRef());
         }

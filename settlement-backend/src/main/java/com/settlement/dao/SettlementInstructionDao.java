@@ -31,7 +31,7 @@ public class SettlementInstructionDao {
         );
         query.setParameter("tradeRef", tradeRef);
         List<SettlementInstruction> results = query.getResultList();
-        return results.isEmpty() ? Optional.empty() : Optional.of(results.get(0));
+        return results.isEmpty() ? Optional.empty() : Optional.of(results.getFirst());
     }
 
     public List<SettlementInstruction> findByStatus(InstructionStatus status) {
