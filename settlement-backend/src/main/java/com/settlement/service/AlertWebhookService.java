@@ -3,8 +3,8 @@ package com.settlement.service;
 import com.settlement.entity.SettlementInstruction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -14,6 +14,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.concurrent.Executor;
 
 @Service
 public class AlertWebhookService {
@@ -28,12 +29,23 @@ public class AlertWebhookService {
     @Value("${settlement.alert.webhook.enabled:false}")
     private boolean webhookEnabled;
 
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(HTTP_TIMEOUT)
-            .build();
+    private final Executor alertExecutor;
+    private final HttpClient httpClient;
 
-    @Async("settlementExecutor")
+    public AlertWebhookService(@Qualifier("alertExecutor") Executor alertExecutor) {
+        this(alertExecutor, HttpClient.newBuilder().connectTimeout(HTTP_TIMEOUT).build());
+    }
+
+    AlertWebhookService(Executor alertExecutor, HttpClient httpClient) {
+        this.alertExecutor = alertExecutor;
+        this.httpClient = httpClient;
+    }
+
     public void sendExhaustedAlert(SettlementInstruction instruction) {
+        alertExecutor.execute(() -> doSendAlert(instruction));
+    }
+
+    private void doSendAlert(SettlementInstruction instruction) {
         if (!webhookEnabled || webhookUrl == null || webhookUrl.isBlank()) {
             log.debug("Webhook alerting disabled or URL not configured, skipping alert for tradeRef={}",
                     instruction.getTradeRef());

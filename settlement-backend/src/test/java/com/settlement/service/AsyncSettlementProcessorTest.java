@@ -24,7 +24,7 @@ class AsyncSettlementProcessorTest {
 
     @BeforeEach
     void setUp() {
-        processor = new AsyncSettlementProcessor(xaExecutor, alertWebhookService);
+        processor = new AsyncSettlementProcessor(xaExecutor, alertWebhookService, Runnable::run);
     }
 
     @Test

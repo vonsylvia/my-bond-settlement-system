@@ -3,10 +3,11 @@ package com.settlement.service;
 import com.settlement.entity.SettlementInstruction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.scheduling.annotation.Async;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.concurrent.Executor;
 
 /**
  * Orchestrates async settlement processing with exponential backoff retry.
@@ -24,20 +25,36 @@ public class AsyncSettlementProcessor {
 
     private final SettlementXaExecutor xaExecutor;
     private final AlertWebhookService alertWebhookService;
+    private final Executor settlementExecutor;
 
     public AsyncSettlementProcessor(SettlementXaExecutor xaExecutor,
-                                    AlertWebhookService alertWebhookService) {
+                                    AlertWebhookService alertWebhookService,
+                                    @Qualifier("settlementExecutor") Executor settlementExecutor) {
         this.xaExecutor = xaExecutor;
         this.alertWebhookService = alertWebhookService;
+        this.settlementExecutor = settlementExecutor;
     }
 
     /**
-     * Phase 2 (async): attempt to send the settlement with built-in
-     * exponential backoff retries. Backoff: 2s → 4s → 8s (capped at 30s).
+     * Phase 2 (async): submit settlement processing to the executor.
+     * Backoff: 2s → 4s → 8s (capped at 30s).
      * Stays FAILED after all retries; traders can manually retry via API.
      */
-    @Async("settlementExecutor")
     public void processSettlementAsync(String tradeRef) {
+        settlementExecutor.execute(() -> doProcess(tradeRef));
+    }
+
+    /**
+     * Crash-recovery: scan for orphaned instructions and re-trigger async processing.
+     */
+    public void recoverOrphanedInstructions() {
+        List<String> tradeRefs = xaExecutor.recoverOrphanedInstructions();
+        for (String tradeRef : tradeRefs) {
+            processSettlementAsync(tradeRef);
+        }
+    }
+
+    private void doProcess(String tradeRef) {
         for (int attempt = 1; attempt <= MAX_RETRY_COUNT; attempt++) {
             try {
                 xaExecutor.executeSettlement(tradeRef);
@@ -71,16 +88,6 @@ public class AsyncSettlementProcessor {
                     return;
                 }
             }
-        }
-    }
-
-    /**
-     * Crash-recovery: scan for orphaned instructions and re-trigger async processing.
-     */
-    public void recoverOrphanedInstructions() {
-        List<String> tradeRefs = xaExecutor.recoverOrphanedInstructions();
-        for (String tradeRef : tradeRefs) {
-            processSettlementAsync(tradeRef);
         }
     }
 

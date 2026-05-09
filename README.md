@@ -411,7 +411,14 @@ Settlement submission follows a **two-phase async pattern** to minimize client l
 
 **Phase 1 (sync, fast):** HTTP request saves the instruction with `PENDING` status to Oracle (no MQ involved), returns `202 Accepted` immediately.
 
-**Phase 2 (async, XA):** A container-managed thread runs `AsyncSettlementProcessor.executeSettlement()` which performs the XA transaction (DB update + JMS send). Uses Liberty's `DefaultManagedExecutorService` so the thread can participate in JTA transactions.
+**Phase 2 (async, XA):** A thread from `settlementExecutor` (a bounded `ThreadPoolTaskExecutor`) runs `AsyncSettlementProcessor.doProcess()` which performs the XA transaction (DB update + JMS send). Each `@Transactional` call inside starts a fresh JTA transaction via Spring's `JtaTransactionManager`; no JTA context is inherited from the caller.
+
+**Thread pools (configured in `applicationContext.xml`):**
+
+| Bean | Class | Core / Max / Queue | Usage |
+|------|-------|--------------------|-------|
+| `settlementExecutor` | `ThreadPoolTaskExecutor` | 5 / 20 / 100 | Settlement retry processing; `CallerRunsPolicy` backpressure when full |
+| `alertExecutor` | `ThreadPoolTaskExecutor` | 2 / 5 / 50 | Webhook alert HTTP calls; `DiscardPolicy` (alert loss is acceptable) |
 
 **Retry on failure:**
 
@@ -421,7 +428,7 @@ Settlement submission follows a **two-phase async pattern** to minimize client l
 | Max attempts | 3 |
 | Retry trigger | Inline in the async thread (no DB polling needed) |
 | Final state | `FAILED` with `failureReason` and `retryCount` recorded |
-| Webhook alert | Sent when all retries exhausted (configurable URL) |
+| Webhook alert | Submitted to `alertExecutor` when all retries exhausted (configurable URL) |
 | Manual retry | Traders can retry via `POST /api/settlement/{tradeRef}/retry` |
 | Crash recovery | Scheduler scans for orphaned `SUBMITTING`/`PENDING` every 120s |
 
