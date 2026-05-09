@@ -52,7 +52,7 @@ class SettlementControllerIT {
     }
 
     @Test
-    void fullFlow_createAndRetrieve() throws Exception {
+    void createSettlement_shouldReturn202_withPendingStatus() throws Exception {
         SettlementRequest request = new SettlementRequest();
         request.setIsin("US0378331005");
         request.setSettlementDate(LocalDate.of(2026, 6, 15));
@@ -65,9 +65,9 @@ class SettlementControllerIT {
         String responseBody = mockMvc.perform(post("/api/settlement")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(request)))
-                .andExpect(status().isCreated())
+                .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.tradeRef").isNotEmpty())
-                .andExpect(jsonPath("$.status").value("SENT"))
+                .andExpect(jsonPath("$.status").value("PENDING"))
                 .andReturn().getResponse().getContentAsString();
 
         String tradeRef = objectMapper.readTree(responseBody).get("tradeRef").asText();

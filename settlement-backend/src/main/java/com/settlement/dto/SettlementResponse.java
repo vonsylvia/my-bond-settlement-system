@@ -15,6 +15,8 @@ public class SettlementResponse {
     private String direction;
     private String status;
     private String accountId;
+    private int retryCount;
+    private String failureReason;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -88,6 +90,22 @@ public class SettlementResponse {
 
     public void setAccountId(String accountId) {
         this.accountId = accountId;
+    }
+
+    public int getRetryCount() {
+        return retryCount;
+    }
+
+    public void setRetryCount(int retryCount) {
+        this.retryCount = retryCount;
+    }
+
+    public String getFailureReason() {
+        return failureReason;
+    }
+
+    public void setFailureReason(String failureReason) {
+        this.failureReason = failureReason;
     }
 
     public LocalDateTime getCreatedAt() {

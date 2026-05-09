@@ -50,6 +50,12 @@ public class SettlementInstruction {
     @Column(name = "MT548_RAW")
     private String mt548Raw;
 
+    @Column(name = "RETRY_COUNT", nullable = false)
+    private int retryCount = 0;
+
+    @Column(name = "FAILURE_REASON", length = 1000)
+    private String failureReason;
+
     @Column(name = "CREATED_AT", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -161,6 +167,22 @@ public class SettlementInstruction {
 
     public void setMt548Raw(String mt548Raw) {
         this.mt548Raw = mt548Raw;
+    }
+
+    public int getRetryCount() {
+        return retryCount;
+    }
+
+    public void setRetryCount(int retryCount) {
+        this.retryCount = retryCount;
+    }
+
+    public String getFailureReason() {
+        return failureReason;
+    }
+
+    public void setFailureReason(String failureReason) {
+        this.failureReason = failureReason;
     }
 
     public LocalDateTime getCreatedAt() {

@@ -28,13 +28,13 @@ A complete SWIFT bond settlement system built for IBM WebSphere + Oracle environ
 - Oracle Database 19c+ (XE edition for dev)
 
 ## Settlement Flow
-[Click for the sequence diagram](https://mermaid.live/view#pako:eNqVVmtv4kYU_StX_lAZLUt4OQGrG4lXqKM44ZmoFVI12DdkusZmZ8ZkaZSv_QH9if0lvWOb4GB22-VDBPY5Z-499zF5MbzIR8M2JH6JMfSwz9lKsPUiBPowT0UCZoL5KNInGyYU9_iGhQrmDjAJ9zFW_pBwJaJQYegXYZ1RgptuBA9X4N73fl6Ks0vzoTMpFcHT-14CRqUCXGOopii23MMi0h1roNN16Vvx7fAhkXlwrmbQCQLOKLXk3CFT-Mx2J_T63YTyzB_VBDfBjh6kkQ6uuycinQySSCfoRaHH6QTFo_Cb0abid4J5AUKfKbZkkmApMDX44-Xl3LFhGi_XXIF8cwB4KJWIPa2f4ucOYclWG0Z30xmcsQ0_O-BTDL0mENlpg0wUnYOKKXSxpSrtAxDoKRCrpVlvVMtQb1r0x7KypPXnNlII0RaFLlC537XhLlbLKA59G7oxD3z4iWoW-uDOrGbtwCM0RaHxU7bFfCZgjga3fed2WDpGJzGPRPTMfYSlFpf_IZu8BcGeYY1SshUeI92xDddrOcP1JqD6VySFaibNUZlSFJXxfDAflE7pzzc-EUAqpmIJ__z1NxBhliKTbj-4ndWvXq1BTyCxfDCVruwEH8uZwifNPmG7Ze1tb1RP2u6Oy8MHO2voW1TPkfisTfIoYRqrA8UdUxwamppiUn8iJ4-uBJLUI4zYTjdJ7pDhQ8ZIxEkbtizgftLPVFYRxerdCQleO6pPaIF5mFWYJkmWCvYc9Zf1_US1706YdZceS5HmILMTt5zBda9zlLOrafQYOtRf2zT66QY9UIKvVigkRKGbtoeZO5loe3I2vBNccWrTXSWIos_xxlwY4uSMGwUVWgk2bNKiHPaI6UVCYJBwHb8Ma0VJ5LjE2nNHTEjc-4pfqXvIt30PUS1k3t8DVwd_xWn68vO13L0xD3gW7IsEn8DtzHq_DPqHt-8Vi63__wjLiCJ5igKfukaC2Z3_asOHL2oHZzQ7Nzc2fKQfpW-JdGKftl8Qrageg9nsZuDSxPxeOBkDMuotk6uOc_MjiXwffzqEY877CLJl9mOSBdLb_ZmbnXeXQ-8Jvc_5uyFN6vhaGA4Kt8LZy74bXvMXhA5uHKPYFW8Zaum9npPf29kmy0pSKizA3D7wUTEeSPiQxWmUjZXgvmGTGpaNNYo10z-NF62yMNQT8RaGTV99fGRxoBbGInwlGl2iv0XRes-kpbR6MuxHRkUoG3FS4Ow_lzcIeYiiR1tEGXatdnGeiBj2i_GVfrfalfpF06o1Wy2r1ahZzbKxo8eNaqXarp-3axfNptVotF_Lxp_JsbVKo1pr1y-qjaZltav189brv6-4yUE)
 ```mermaid
 sequenceDiagram
     actor Trader
     participant UI as Vue.js Frontend
     participant API as Spring MVC<br/>(WAR)
     participant SVC as SettlementService
+    participant ASYNC as AsyncSettlement<br/>Processor
     participant MQ as IBM MQ
     participant GW as SWIFT Alliance<br/>Gateway
     participant MDB as SwiftReplyMDB<br/>(EJB)
@@ -46,15 +46,25 @@ sequenceDiagram
     API->>SVC: submitInstruction(request)
 
     rect rgb(230, 245, 255)
-        Note over SVC,DB: Outbound: Build & Send MT541
-        SVC->>DB: Save instruction (PENDING)
+        Note over SVC,DB: Phase 1 (sync): Save instruction
         SVC->>SVC: Prowide builds MT541
-        SVC->>DB: Save MT541 raw message
-        SVC->>MQ: JmsTemplate.send(SWIFT.SEND.QUEUE)
-        SVC->>DB: Update status → SENT
+        SVC->>DB: Save instruction (PENDING) + MT541 raw
     end
 
-    API-->>UI: 201 Created (tradeRef, status=SENT)
+    API-->>UI: 202 Accepted (tradeRef, status=PENDING)
+
+    rect rgb(240, 230, 255)
+        Note over ASYNC,MQ: Phase 2 (async XA): Send MT541
+        SVC--)ASYNC: processSettlementAsync(tradeRef)
+        ASYNC->>DB: Update status → SUBMITTING
+        ASYNC->>MQ: JmsTemplate.send(SWIFT.SEND.QUEUE)
+        ASYNC->>DB: Update status → SENT
+        Note over ASYNC: On failure: exponential backoff retry<br/>(2s → 4s → 8s, max 3 attempts)
+        alt All retries failed
+            ASYNC->>DB: Update status → FAILED
+            ASYNC--)ASYNC: Webhook alert
+        end
+    end
 
     rect rgb(255, 245, 230)
         Note over MQ,GW: SWIFT Network Processing
@@ -82,6 +92,15 @@ sequenceDiagram
         end
     end
 
+    opt Manual retry (FAILED instructions)
+        Trader->>UI: Click "Retry" button
+        UI->>API: POST /api/settlement/{tradeRef}/retry
+        API->>SVC: manualRetry(tradeRef)
+        SVC->>DB: Reset status → PENDING, retryCount → 0
+        SVC--)ASYNC: processSettlementAsync(tradeRef)
+        API-->>UI: 202 Accepted (status=PENDING)
+    end
+
     Trader->>UI: Check settlement status
     UI->>API: GET /api/settlement/{tradeRef}
     API->>DB: Query instruction
@@ -90,7 +109,7 @@ sequenceDiagram
 ```
 
 ### Component Architecture
-[Click for the graph](https://mermaid.live/view#pako:eNqNVNtymzAQ_RWN-tJObeIbdsxDZzAmqT2-BZxk2tAHAcJRIgMjIKkT59-7EnbiW2aqB2YlnXO0qz3iFQdJSLGBF4Kk92je82IEIyv8csE2nTsPwxfNSPBIFhT5SRxWM5rnnC5pnGuUCA__KWl71FtF_UBWfVCgcag9E4HcVLB4gcY31h5ZDmvujIDo2O4cWUmci4RzKrIjnHtjNQDnvh_gUvHEAnoEdGxrOpGKNEjigHFGcpbEn6Fde9K3ZebuM4vyMc0yqNqFvKlAZ2i4zOZ0mXKSHzP75hRow5kpowzAP5lPRQxQ1D4CDyaDucpeZeHQBctysRrELGeEsxe6f6lw_Ikbtoe98bS_f8n0wdceDloix7jfa2yLcmjKV7DwH0eMBj1gceafSSug7J4IGp644cvjWk6rq-DAZIPJhWOCwCCOBAFqEeSF2L_f8ZXsizzkdnAx1-REu7q2r-0DFPT65h3l2LPRrxOwqWNaI_vuq4enggScoj7JiU8yOPLbDkyJbMWQycE4cUDRJTT0mXyUt1ORtC6qVn-slXnN2WCtXFpuykhuSnccrJSe2yyqWKkMx-56U3m5V8YlRSa1Yaj85GJZ_xYr41LHMpEZ5OypNH5Kg7XyQwmUTlQwoRpHxVr2cyMCKLXHk-SxSNF3JGjEaSB1dmAQoKoGMF-wcEHX5ZPb7kG4XzcEZV7wVOBJzc31piXvzshX0BWpGjHOjS9RFHZqtQpYI3mkxpdms7mLU0mWwG7NtrufAlWlJfC8Y9l2bxeIK_APZCE2wH-0gpdULImc4lcp4eH8Hh6Yhw0IQxqRguce9uI3oKUk_p0kyy1TJMXiHhsR4RnMijQEv_QZAat_QNTvxEqKOMeGrhSw8Yr_YqNe11qtjt5tNGrdTvNcr7UreIWNaqPV1PS63m2123pbr3f0twp-UYfWtUazVe_qerdWqwOv_fYP6HWy5g)
+
 ```mermaid
 graph TB
     subgraph EAR["EAR Package bond-settlement.ear"]
@@ -334,7 +353,7 @@ The WAR (Spring) and EJB modules run in separate classloaders within the EAR.
 ### Transaction Management (JTA + XA Two-Phase Commit)
 
 The system uses **JTA with XA two-phase commit** to guarantee atomic consistency between Oracle Database and IBM MQ. Liberty's JTA transaction manager coordinates both resources.
-[Click for the graph](https://mermaid.live/view#pako:eNqNklFv2jAUhf-K5b50GlDSNCSxpmqEMKlVvTZtJlVbpsqQC0RLbOQ43Rjlv_di2Eqqapofotg-3_G5117TqcqBMjrXYrkgV7eZJDjqZrJbuEyH3zKKX5JqIWsxNYWS5PiqmIA2q3cZ_b4DtiMvNOz20-hlNeVocAhzIcUc9IeJPjk_Tn-q7s1C1EBGqqoK03a8Hz7EEeL3Q3ILtWr0FJjlrrWYlkBiYcQE4dcQT96CLiJOeNLSppx0u-dPSw1LoeFkajM87c79HxXaWRXIPJOvWnd9gyE-HlQuSsLBLFTeihBHD1YZR4zciUcghayNbixhY78nX5a5MEBqI0xTt2Ce7GCeIIwhCE-9M8dij4Ugl5_jCzL69Bc5iGmPJd0e1gWyLGoDeatu6_zG_rbifaFmhVeAvZkVZcmOZrPc7_c7mF39AHbkuu6hzDrvlYE_Go-jfyh5sleG_fE4bHnSDr7UIqcMWwQdWoGuxHZK11uPjJoFVPgcGP7mMBNNaTKayQ1iSyG_KlX9IbVq5gvKZqKscdbYDseFwKt7kWC7QI9UIw1lnnWgbE1_UeaGPSfwz8LA94OBc-oOOnRFmeM6vSAI_dPAc3zPcQaDTYf-tmf2e4HvbZ4B900Lsg)
+
 ```mermaid
 graph LR
     subgraph JTA["JTA Transaction (Liberty)"]
@@ -361,9 +380,20 @@ graph LR
 
 **Why JTA is required:**
 
-1. **XA consistency (outbound)** — `SettlementService.submitInstruction()` saves to Oracle AND sends MT541 to MQ in the same `@Transactional` method. Using a container-managed JNDI `ConnectionFactory` (`jms/SwiftQueueCF`), both resources are enlisted in the JTA transaction. If either fails, both roll back atomically.
+1. **XA consistency (outbound)** — `AsyncSettlementProcessor.executeSettlement()` updates Oracle AND sends MT541 to MQ in the same `@Transactional` method. Using a container-managed JNDI `ConnectionFactory` (`jms/SwiftQueueCF`), both resources are enlisted in the JTA transaction. If either fails, both roll back atomically.
 2. **MDB compatibility (inbound)** — MDB runs in a container-managed JTA transaction. Spring's `@Transactional` on `ReconciliationService.processSwiftReply()` joins this existing JTA transaction instead of attempting a local `Connection.commit()` (which would cause `DSRA9350E`).
 3. **Hibernate JTA platform** — configured via `hibernate.transaction.jta.platform` = `WebSphereLibertyJtaPlatform`.
+
+**XA Transaction Timeout:**
+
+Configured in `server.xml` with explicit values:
+
+| Setting | Value | Description |
+|---------|-------|-------------|
+| `totalTranLifetimeTimeout` | 30s | Max lifetime for XA global transaction |
+| `propogatedOrBMTTranLifetimeTimeout` | 30s | Max lifetime for propagated / BMT transactions |
+| `clientInactivityTimeout` | 10s | Max idle time before transaction times out |
+| `LPSHeuristicCompletion` | ROLLBACK | Heuristic decision on failure: rollback for safety |
 
 Key configuration:
 
@@ -373,6 +403,35 @@ Key configuration:
 | `applicationContext.xml` | `jtaDataSource` (not `dataSource`) | DB connection enlisted in JTA |
 | `MqClientConfig.java` | `InitialContext.doLookup("jms/SwiftQueueCF")` | MQ connection enlisted in JTA |
 | `server.xml` | `<jmsQueueConnectionFactory>` | Container-managed XA connection factory |
+| `server.xml` | `<transaction>` | XA timeout & heuristic config |
+
+### Async Processing & Retry
+
+Settlement submission follows a **two-phase async pattern** to minimize client latency:
+
+**Phase 1 (sync, fast):** HTTP request saves the instruction with `PENDING` status to Oracle (no MQ involved), returns `202 Accepted` immediately.
+
+**Phase 2 (async, XA):** A container-managed thread runs `AsyncSettlementProcessor.executeSettlement()` which performs the XA transaction (DB update + JMS send). Uses Liberty's `DefaultManagedExecutorService` so the thread can participate in JTA transactions.
+
+**Retry on failure:**
+
+| Aspect | Detail |
+|--------|--------|
+| Strategy | Exponential backoff: 2s → 4s → 8s (max 30s) |
+| Max attempts | 3 |
+| Retry trigger | Inline in the async thread (no DB polling needed) |
+| Final state | `FAILED` with `failureReason` and `retryCount` recorded |
+| Webhook alert | Sent when all retries exhausted (configurable URL) |
+| Manual retry | Traders can retry via `POST /api/settlement/{tradeRef}/retry` |
+| Crash recovery | Scheduler scans for orphaned `SUBMITTING`/`PENDING` every 120s |
+
+**Status flow:**
+
+```
+PENDING → SUBMITTING → SENT → MATCHED     (happy path)
+PENDING → SUBMITTING → FAILED              (all 3 retries failed)
+FAILED  → PENDING → SUBMITTING → SENT      (manual retry success)
+```
 
 ## API Endpoints
 
@@ -380,8 +439,9 @@ Key configuration:
 |--------|------|-------------|
 | `GET` | `/api/holdings` | List all bond holdings |
 | `GET` | `/api/holdings/{accountId}` | Get holdings for account |
-| `POST` | `/api/settlement` | Submit settlement instruction |
-| `GET` | `/api/settlement/{tradeRef}` | Get instruction status |
+| `POST` | `/api/settlement` | Submit settlement instruction (returns 202, async processing) |
+| `GET` | `/api/settlement/{tradeRef}` | Get instruction status (includes `retryCount`, `failureReason`) |
+| `POST` | `/api/settlement/{tradeRef}/retry` | Manual retry for FAILED instructions |
 | `GET` | `/api/mq/health` | IBM MQ connection health check |
 | `POST` | `/api/mq/test-mdb` | Send test MT548 to verify MDB processing |
 
@@ -399,6 +459,13 @@ Environment variables used by the Docker setup:
 | `MQ_QMGR` | `SETTLEMENT_QM` | MQ queue manager |
 | `MQ_USER` | `app` | MQ application user |
 | `MQ_PASSWORD` | `passw0rd` | MQ application password |
+
+Application properties (`settlement.properties`):
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `settlement.alert.webhook.enabled` | `false` | Enable webhook alerts for retry exhaustion |
+| `settlement.alert.webhook.url` | (empty) | Webhook URL (Slack, PagerDuty, DingTalk, etc.) |
 
 ## Liberty Server Configuration
 

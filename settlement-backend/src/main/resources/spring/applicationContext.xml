@@ -4,6 +4,7 @@
        xmlns:context="http://www.springframework.org/schema/context"
        xmlns:tx="http://www.springframework.org/schema/tx"
        xmlns:jee="http://www.springframework.org/schema/jee"
+       xmlns:task="http://www.springframework.org/schema/task"
        xsi:schemaLocation="
            http://www.springframework.org/schema/beans
            http://www.springframework.org/schema/beans/spring-beans.xsd
@@ -12,7 +13,13 @@
            http://www.springframework.org/schema/tx
            http://www.springframework.org/schema/tx/spring-tx.xsd
            http://www.springframework.org/schema/jee
-           http://www.springframework.org/schema/jee/spring-jee.xsd">
+           http://www.springframework.org/schema/jee/spring-jee.xsd
+           http://www.springframework.org/schema/task
+           http://www.springframework.org/schema/task/spring-task.xsd">
+
+    <!-- Load external properties -->
+    <context:property-placeholder location="classpath:settlement.properties"
+                                  ignore-unresolvable="true"/>
 
     <!-- Component scanning (exclude controllers, handled by MVC config) -->
     <context:annotation-config/>
@@ -53,5 +60,15 @@
 
     <!-- Enable @Transactional -->
     <tx:annotation-driven transaction-manager="transactionManager"/>
+
+    <!-- Container-managed executor for async settlement processing (JTA-capable threads) -->
+    <bean id="settlementExecutor"
+          class="org.springframework.scheduling.concurrent.DefaultManagedTaskExecutor">
+        <property name="jndiName" value="java:comp/DefaultManagedExecutorService"/>
+    </bean>
+
+    <!-- Enable @Async and @Scheduled -->
+    <task:annotation-driven executor="settlementExecutor" scheduler="retryScheduler"/>
+    <task:scheduler id="retryScheduler" pool-size="2"/>
 
 </beans>
