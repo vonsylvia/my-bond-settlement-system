@@ -12,6 +12,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.List;
 import java.util.UUID;
@@ -71,7 +73,7 @@ public class SettlementService {
         log.info("Settlement instruction created: tradeRef={}, ISIN={}, direction={} — async send queued",
                 tradeRef, request.getIsin(), request.getDirection());
 
-        asyncProcessor.processSettlementAsync(tradeRef);
+        scheduleAfterCommit(tradeRef);
 
         return instruction;
     }
@@ -108,7 +110,7 @@ public class SettlementService {
 
         log.info("Manual retry triggered: tradeRef={}", tradeRef);
 
-        asyncProcessor.processSettlementAsync(tradeRef);
+        scheduleAfterCommit(tradeRef);
 
         return instruction;
     }
@@ -141,6 +143,23 @@ public class SettlementService {
         resp.setQuantity(holding.getQuantity());
         resp.setUpdatedAt(holding.getUpdatedAt());
         return resp;
+    }
+
+    /**
+     * Submits async processing after the current transaction commits.
+     * If no active transaction (e.g. in unit tests), submits immediately.
+     */
+    private void scheduleAfterCommit(String tradeRef) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    asyncProcessor.processSettlementAsync(tradeRef);
+                }
+            });
+        } else {
+            asyncProcessor.processSettlementAsync(tradeRef);
+        }
     }
 
     private String generateTradeRef() {
