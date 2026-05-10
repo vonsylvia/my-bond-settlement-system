@@ -1,6 +1,7 @@
 package com.settlement.controller;
 
 import com.settlement.bridge.MdbMetricsHolder;
+import com.settlement.reconcile.ReconciliationMetrics;
 import com.settlement.service.MqMonitorService;
 import jakarta.jms.ConnectionFactory;
 import org.junit.jupiter.api.BeforeEach;
@@ -42,7 +43,8 @@ class MqConnectivityControllerTest {
     @BeforeEach
     void setUp() throws Exception {
         MqConnectivityController controller = new MqConnectivityController(
-                connectionFactoryProvider, jmsTemplateProvider, mqMonitorServiceProvider);
+                connectionFactoryProvider, jmsTemplateProvider, mqMonitorServiceProvider,
+                new ReconciliationMetrics());
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
 
         resetMetricsField("totalReceived");

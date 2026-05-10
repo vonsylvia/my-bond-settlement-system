@@ -1,6 +1,7 @@
 package com.settlement.controller;
 
 import com.settlement.bridge.MdbMetricsHolder;
+import com.settlement.reconcile.ReconciliationMetrics;
 import com.settlement.service.MqMonitorService;
 import jakarta.jms.Connection;
 import jakarta.jms.ConnectionFactory;
@@ -28,13 +29,16 @@ public class MqConnectivityController {
     private final ObjectProvider<ConnectionFactory> connectionFactoryProvider;
     private final ObjectProvider<JmsTemplate> jmsTemplateProvider;
     private final ObjectProvider<MqMonitorService> mqMonitorServiceProvider;
+    private final ReconciliationMetrics reconciliationMetrics;
 
     public MqConnectivityController(ObjectProvider<ConnectionFactory> connectionFactoryProvider,
                                     ObjectProvider<JmsTemplate> jmsTemplateProvider,
-                                    ObjectProvider<MqMonitorService> mqMonitorServiceProvider) {
+                                    ObjectProvider<MqMonitorService> mqMonitorServiceProvider,
+                                    ReconciliationMetrics reconciliationMetrics) {
         this.connectionFactoryProvider = connectionFactoryProvider;
         this.jmsTemplateProvider = jmsTemplateProvider;
         this.mqMonitorServiceProvider = mqMonitorServiceProvider;
+        this.reconciliationMetrics = reconciliationMetrics;
     }
 
     /**
@@ -117,6 +121,7 @@ public class MqConnectivityController {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("timestamp", Instant.now().toString());
         result.put("mdb", MdbMetricsHolder.snapshot());
+        result.put("reconciliation", reconciliationMetrics.snapshot());
 
         MqMonitorService monitorService = mqMonitorServiceProvider.getIfAvailable();
         if (monitorService != null) {
