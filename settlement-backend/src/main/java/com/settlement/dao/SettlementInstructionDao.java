@@ -58,4 +58,34 @@ public class SettlementInstructionDao {
             "SELECT COUNT(s) FROM SettlementInstruction s", Long.class
         ).getSingleResult();
     }
+
+    /**
+     * Directly updates failure fields without a prior SELECT.
+     * Returns the number of rows updated (0 if tradeRef not found).
+     */
+    public int updateFailure(String tradeRef, int retryCount, String failureReason) {
+        return entityManager.createQuery(
+            "UPDATE SettlementInstruction s " +
+            "SET s.status = :status, s.retryCount = :retryCount, s.failureReason = :reason " +
+            "WHERE s.tradeRef = :tradeRef"
+        )
+        .setParameter("status", InstructionStatus.FAILED)
+        .setParameter("retryCount", retryCount)
+        .setParameter("reason", failureReason)
+        .setParameter("tradeRef", tradeRef)
+        .executeUpdate();
+    }
+
+    /**
+     * Bulk-updates all instructions with {@code fromStatus} to {@code toStatus}.
+     * Returns the number of rows updated.
+     */
+    public int bulkUpdateStatus(InstructionStatus fromStatus, InstructionStatus toStatus) {
+        return entityManager.createQuery(
+            "UPDATE SettlementInstruction s SET s.status = :toStatus WHERE s.status = :fromStatus"
+        )
+        .setParameter("toStatus", toStatus)
+        .setParameter("fromStatus", fromStatus)
+        .executeUpdate();
+    }
 }
