@@ -33,12 +33,8 @@ public class AlertWebhookService {
     private final HttpClient httpClient;
 
     public AlertWebhookService(@Qualifier("alertExecutor") Executor alertExecutor) {
-        this(alertExecutor, HttpClient.newBuilder().connectTimeout(HTTP_TIMEOUT).build());
-    }
-
-    AlertWebhookService(Executor alertExecutor, HttpClient httpClient) {
         this.alertExecutor = alertExecutor;
-        this.httpClient = httpClient;
+        this.httpClient = HttpClient.newBuilder().connectTimeout(HTTP_TIMEOUT).build();
     }
 
     public void sendExhaustedAlert(SettlementInstruction instruction) {
