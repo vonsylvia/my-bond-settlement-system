@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "liberty"
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["liberty:9080"]
+        labels:
+          app: "bond-settlement"
+
+  - job_name: "ibm-mq"
+    metrics_path: /metrics
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["ibmmq:9157"]
+        labels:
+          app: "ibm-mq"

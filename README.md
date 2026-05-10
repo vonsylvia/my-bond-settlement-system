@@ -451,6 +451,7 @@ FAILED  → PENDING → SUBMITTING → SENT      (manual retry success)
 | `POST` | `/api/settlement/{tradeRef}/retry` | Manual retry for FAILED instructions |
 | `GET` | `/api/mq/health` | IBM MQ connection health check |
 | `POST` | `/api/mq/test-mdb` | Send test MT548 to verify MDB processing |
+| `GET` | `/api/mq/stats` | MDB processing metrics + live queue depth/consumer status |
 
 ## Configuration
 
@@ -473,6 +474,12 @@ Application properties (`settlement.properties`):
 |----------|---------|-------------|
 | `settlement.alert.webhook.enabled` | `false` | Enable webhook alerts for retry exhaustion |
 | `settlement.alert.webhook.url` | (empty) | Webhook URL (Slack, PagerDuty, DingTalk, etc.) |
+| `mq.monitor.host` | `${MQ_HOST:localhost}` | MQ host for PCF admin queries |
+| `mq.monitor.port` | `${MQ_PORT:1414}` | MQ port for PCF admin queries |
+| `mq.monitor.channel` | `DEV.ADMIN.SVRCONN` | MQ admin channel for monitoring (requires PCF authority) |
+| `mq.monitor.queueManager` | `SETTLEMENT_QM` | Queue manager name |
+| `mq.monitor.user` | `admin` | MQ admin user for PCF queries |
+| `mq.monitor.password` | `passw0rd` | MQ admin password |
 
 ## Liberty Server Configuration
 
@@ -484,6 +491,67 @@ Key server.xml elements for MDB activation:
 | `<jmsQueueConnectionFactory>` | Container-managed MQ connection factory |
 | `<jmsQueue>` | SWIFT send/reply queue definitions |
 | `<jmsActivationSpec id="jms/SwiftReplyActivationSpec">` | MDB activation spec bound to SWIFT.REPLY.QUEUE |
+
+**MDB Concurrency:**
+
+The activation spec configures `maxPoolDepth="5"`, which controls the maximum number of concurrent MDB instances consuming from `SWIFT.REPLY.QUEUE`. This is appropriate for bond settlement where reliability and ordering take priority over throughput. Increase this value if queue depth (`GET /api/mq/stats`) shows sustained backlog.
+
+**MQ Monitoring:**
+
+`GET /api/mq/stats` provides live operational visibility:
+- **MDB counters** — total received/success/failed messages with timestamps (in-memory, reset on restart)
+- **Queue status** — current depth, max depth, open input/output handles, last put/get times (live from MQ via PCF admin commands)
+
+## Monitoring (Prometheus + Grafana)
+
+The project includes a full observability stack via Docker:
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Grafana | http://localhost:3000 | admin / admin |
+| Prometheus | http://localhost:9090 | (none) |
+| Liberty Metrics | http://localhost:9080/metrics | (none) |
+| MQ Metrics | http://localhost:9157/metrics | (none) |
+
+**Architecture:**
+
+```
+┌─────────────┐     /metrics      ┌────────────┐     scrape     ┌─────────┐
+│   Liberty   │──────────────────▶│ Prometheus │◀───────────────│  MQ     │
+│ (mpMetrics) │                   │            │                │ Exporter│
+└─────────────┘                   └─────┬──────┘                └────┬────┘
+                                        │                            │
+                                        ▼                            │
+                                  ┌──────────┐              ┌───────▼───────┐
+                                  │ Grafana  │              │    IBM MQ     │
+                                  │Dashboard │              │ (PCF queries) │
+                                  └──────────┘              └───────────────┘
+```
+
+**Pre-configured Grafana Dashboard includes:**
+- MQ queue depth (SWIFT.REPLY.QUEUE, SWIFT.SEND.QUEUE)
+- Dead Letter Queue depth (with color thresholds)
+- MQ consumer count (open input handles)
+- Message put/get rates
+- Liberty HTTP request rate
+- Liberty connection pool usage
+- JVM heap memory
+
+**Usage:**
+
+```bash
+# Start core services only (Oracle + MQ + Liberty)
+docker compose up -d
+
+# Start with monitoring stack (adds Prometheus + Grafana)
+docker compose --profile monitoring up -d
+```
+
+**Liberty MicroProfile Metrics** (`mpMetrics-5.1` + `monitor-1.0`) automatically exposes:
+- JVM metrics (heap, GC, threads)
+- HTTP servlet request counts and response times
+- Connection pool statistics (Oracle DS, MQ CF)
+- REST request metrics
 
 ## Troubleshooting
 
