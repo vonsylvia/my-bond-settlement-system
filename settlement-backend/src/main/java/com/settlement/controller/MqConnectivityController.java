@@ -1,5 +1,7 @@
 package com.settlement.controller;
 
+import com.settlement.bridge.MdbMetricsHolder;
+import com.settlement.service.MqMonitorService;
 import jakarta.jms.Connection;
 import jakarta.jms.ConnectionFactory;
 import jakarta.jms.Session;
@@ -14,7 +16,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * REST endpoints for verifying IBM MQ connectivity and MDB message delivery.
+ * REST endpoints for verifying IBM MQ connectivity, MDB message delivery,
+ * and runtime queue/MDB monitoring.
  */
 @RestController
 @RequestMapping("/api/mq")
@@ -24,11 +27,14 @@ public class MqConnectivityController {
 
     private final ObjectProvider<ConnectionFactory> connectionFactoryProvider;
     private final ObjectProvider<JmsTemplate> jmsTemplateProvider;
+    private final ObjectProvider<MqMonitorService> mqMonitorServiceProvider;
 
     public MqConnectivityController(ObjectProvider<ConnectionFactory> connectionFactoryProvider,
-                                    ObjectProvider<JmsTemplate> jmsTemplateProvider) {
+                                    ObjectProvider<JmsTemplate> jmsTemplateProvider,
+                                    ObjectProvider<MqMonitorService> mqMonitorServiceProvider) {
         this.connectionFactoryProvider = connectionFactoryProvider;
         this.jmsTemplateProvider = jmsTemplateProvider;
+        this.mqMonitorServiceProvider = mqMonitorServiceProvider;
     }
 
     /**
@@ -99,6 +105,28 @@ public class MqConnectivityController {
             result.put("status", "ERROR");
             result.put("message", e.getMessage());
         }
+        return result;
+    }
+
+    /**
+     * Returns MDB processing metrics and MQ queue status for all monitored queues.
+     * MDB counters are in-memory (reset on restart); queue stats are live from MQ.
+     */
+    @GetMapping("/stats")
+    public Map<String, Object> stats() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("timestamp", Instant.now().toString());
+        result.put("mdb", MdbMetricsHolder.snapshot());
+
+        MqMonitorService monitorService = mqMonitorServiceProvider.getIfAvailable();
+        if (monitorService != null) {
+            result.put("queues", monitorService.queryAllQueueStatus());
+        } else {
+            Map<String, String> unavailable = new LinkedHashMap<>();
+            unavailable.put("error", "MqMonitorService not available");
+            result.put("queues", unavailable);
+        }
+
         return result;
     }
 

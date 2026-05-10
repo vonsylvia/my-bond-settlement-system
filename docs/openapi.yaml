@@ -121,6 +121,85 @@ paths:
                 items:
                   $ref: '#/components/schemas/HoldingResponse'
 
+  /api/mq/health:
+    get:
+      summary: IBM MQ connection health check
+      description: Tests basic MQ connectivity by creating and closing a JMS session
+      operationId: mqHealth
+      responses:
+        '200':
+          description: MQ connection status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MqHealthResponse'
+
+  /api/mq/test-mdb:
+    post:
+      summary: Send test MT548 to verify MDB processing
+      description: |
+        Sends a test MT548 reply message to SWIFT.REPLY.QUEUE.
+        The SwiftReplyMDB should pick it up and process it through ReconciliationService.
+      operationId: testMdb
+      parameters:
+        - name: correlationId
+          in: query
+          required: false
+          schema:
+            type: string
+            default: "TEST-MDB-001"
+          description: Correlation ID for the test message
+      responses:
+        '200':
+          description: Test message sent (or error)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MqTestMdbResponse'
+
+  /api/mq/stats:
+    get:
+      summary: MDB processing metrics and queue status
+      description: |
+        Returns in-memory MDB processing counters (reset on restart) and live
+        queue statistics from IBM MQ via PCF admin commands. Covers SWIFT.REPLY.QUEUE,
+        SWIFT.SEND.QUEUE, and SWIFT.DLQ.
+      operationId: mqStats
+      responses:
+        '200':
+          description: MDB metrics and queue status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MqStatsResponse'
+              example:
+                timestamp: "2026-05-10T07:10:00Z"
+                mdb:
+                  totalReceived: 1234
+                  totalSuccess: 1230
+                  totalFailed: 4
+                  lastReceivedAt: "2026-05-10T07:09:55Z"
+                  lastSuccessAt: "2026-05-10T07:09:55Z"
+                  lastFailedAt: "2026-05-10T06:30:12Z"
+                queues:
+                  SWIFT.REPLY.QUEUE:
+                    currentDepth: 3
+                    maxDepth: 10000
+                    openInputCount: 5
+                    openOutputCount: 1
+                    lastPutDateTime: "2026-05-10 07:09:55"
+                    lastGetDateTime: "2026-05-10 07:09:55"
+                  SWIFT.SEND.QUEUE:
+                    currentDepth: 0
+                    maxDepth: 10000
+                    openInputCount: 0
+                    openOutputCount: 1
+                  SWIFT.DLQ:
+                    currentDepth: 0
+                    maxDepth: 50000
+                    openInputCount: 0
+                    openOutputCount: 0
+
 components:
   schemas:
     SettlementRequest:
@@ -247,6 +326,106 @@ components:
         totalPages:
           type: integer
           example: 3
+
+    MqHealthResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [OK, ERROR]
+        message:
+          type: string
+        connectionClass:
+          type: string
+        jmsProviderName:
+          type: string
+        providerVersion:
+          type: string
+
+    MqTestMdbResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        correlationId:
+          type: string
+        status:
+          type: string
+          enum: [SENT, ERROR]
+        message:
+          type: string
+        destination:
+          type: string
+
+    MqStatsResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        mdb:
+          $ref: '#/components/schemas/MdbMetrics'
+        queues:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/QueueStatus'
+
+    MdbMetrics:
+      type: object
+      properties:
+        totalReceived:
+          type: integer
+          format: int64
+          description: Total messages received by MDB since last restart
+        totalSuccess:
+          type: integer
+          format: int64
+          description: Total messages processed successfully
+        totalFailed:
+          type: integer
+          format: int64
+          description: Total messages that failed processing
+        lastReceivedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: ISO timestamp of last received message
+        lastSuccessAt:
+          type: string
+          format: date-time
+          nullable: true
+        lastFailedAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    QueueStatus:
+      type: object
+      properties:
+        currentDepth:
+          type: integer
+          description: Number of messages currently on the queue
+        maxDepth:
+          type: integer
+          description: Maximum queue depth configured
+        openInputCount:
+          type: integer
+          description: Number of handles open for input (consumers)
+        openOutputCount:
+          type: integer
+          description: Number of handles open for output (producers)
+        lastPutDateTime:
+          type: string
+          nullable: true
+          description: Date/time of last message put (format YYYY-MM-DD HH:MM:SS)
+        lastGetDateTime:
+          type: string
+          nullable: true
+          description: Date/time of last message get (format YYYY-MM-DD HH:MM:SS)
 
     ErrorResponse:
       type: object

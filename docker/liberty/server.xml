@@ -97,6 +97,7 @@
             transportType="CLIENT"
             destination="SWIFT.REPLY.QUEUE"
             destinationType="jakarta.jms.Queue"
+            maxPoolDepth="5"
             userName="app"
             password="passw0rd"/>
     </jmsActivationSpec>
