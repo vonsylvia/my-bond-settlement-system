@@ -1,5 +1,6 @@
 package com.settlement.service;
 
+import com.settlement.entity.AlertEvent;
 import com.settlement.entity.SettlementInstruction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,17 +39,20 @@ public class AlertWebhookService {
     }
 
     public void sendExhaustedAlert(SettlementInstruction instruction) {
-        alertExecutor.execute(() -> doSendAlert(instruction));
+        alertExecutor.execute(() -> doSendAlert(AlertEvent.SETTLEMENT_EXHAUSTED,
+                buildExhaustedPayload(instruction)));
     }
 
-    private void doSendAlert(SettlementInstruction instruction) {
+    public void sendUnknownStatusAlert(String tradeRef, String isin) {
+        alertExecutor.execute(() -> doSendAlert(AlertEvent.SETTLEMENT_STATUS_UNKNOWN,
+                buildUnknownStatusPayload(tradeRef, isin)));
+    }
+
+    private void doSendAlert(AlertEvent alertEvent, String payload) {
         if (!webhookEnabled || webhookUrl == null || webhookUrl.isBlank()) {
-            log.debug("Webhook alerting disabled or URL not configured, skipping alert for tradeRef={}",
-                    instruction.getTradeRef());
+            log.debug("Webhook alerting disabled, skipping {} alert", alertEvent.getEvent());
             return;
         }
-
-        String payload = buildPayload(instruction);
 
         try {
             HttpRequest request = HttpRequest.newBuilder()
@@ -61,25 +65,25 @@ public class AlertWebhookService {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() >= 200 && response.statusCode() < 300) {
-                log.info("Webhook alert sent successfully: tradeRef={}, status={}",
-                        instruction.getTradeRef(), response.statusCode());
+                log.info("Webhook alert sent: event={}, severity={}, httpStatus={}",
+                        alertEvent.getEvent(), alertEvent.getSeverity(), response.statusCode());
             } else {
-                log.warn("Webhook alert returned non-success status: tradeRef={}, status={}, body={}",
-                        instruction.getTradeRef(), response.statusCode(), response.body());
+                log.warn("Webhook alert non-success: event={}, httpStatus={}, body={}",
+                        alertEvent.getEvent(), response.statusCode(), response.body());
             }
         } catch (IOException | InterruptedException e) {
-            log.error("Failed to send webhook alert: tradeRef={}", instruction.getTradeRef(), e);
+            log.error("Failed to send webhook alert: event={}", alertEvent.getEvent(), e);
             if (e instanceof InterruptedException) {
                 Thread.currentThread().interrupt();
             }
         }
     }
 
-    private String buildPayload(SettlementInstruction instruction) {
+    private String buildExhaustedPayload(SettlementInstruction instruction) {
         return String.format("""
                 {
-                  "event": "SETTLEMENT_EXHAUSTED",
-                  "severity": "CRITICAL",
+                  "event": "%s",
+                  "severity": "%s",
                   "timestamp": "%s",
                   "tradeRef": "%s",
                   "isin": "%s",
@@ -89,6 +93,8 @@ public class AlertWebhookService {
                   "lastFailureReason": "%s",
                   "message": "Settlement instruction has exhausted all retry attempts and requires manual intervention."
                 }""",
+                AlertEvent.SETTLEMENT_EXHAUSTED.getEvent(),
+                AlertEvent.SETTLEMENT_EXHAUSTED.getSeverity(),
                 LocalDateTime.now(),
                 instruction.getTradeRef(),
                 instruction.getIsin(),
@@ -96,6 +102,23 @@ public class AlertWebhookService {
                 instruction.getAccountId(),
                 instruction.getRetryCount(),
                 escapeJson(instruction.getFailureReason()));
+    }
+
+    private String buildUnknownStatusPayload(String tradeRef, String isin) {
+        return String.format("""
+                {
+                  "event": "%s",
+                  "severity": "%s",
+                  "timestamp": "%s",
+                  "tradeRef": "%s",
+                  "isin": "%s",
+                  "message": "MT548 reply could not be parsed — settlement status unknown, requires manual review."
+                }""",
+                AlertEvent.SETTLEMENT_STATUS_UNKNOWN.getEvent(),
+                AlertEvent.SETTLEMENT_STATUS_UNKNOWN.getSeverity(),
+                LocalDateTime.now(),
+                tradeRef,
+                isin != null ? isin : "");
     }
 
     private static String escapeJson(String value) {

@@ -78,6 +78,7 @@ sequenceDiagram
         MQ->>MDB: JCA Activation Spec triggers onMessage()
         MDB->>MDB: ServiceRegistry.lookup("reconciliationService")
         MDB->>REC: processSwiftReply(correlationId, mt548)
+        REC->>REC: Sanitise raw message (BOM, NUL, line endings)
         REC->>REC: Parse MT548 (extract tradeRef & status)
         REC->>DB: Find instruction by tradeRef
         alt Status = MATCHED
@@ -89,6 +90,10 @@ sequenceDiagram
             REC->>DB: Audit log: SETTLEMENT_FAILED
         else Status = PENDING
             REC->>DB: Audit log: SETTLEMENT_PENDING
+        else Status = UNKNOWN (unparseable)
+            REC->>DB: Audit log: SETTLEMENT_STATUS_UNKNOWN
+            REC--)REC: Webhook alert (HIGH severity)
+            Note over REC: Instruction status unchanged,<br/>requires manual review
         end
     end
 
@@ -438,6 +443,7 @@ Settlement submission follows a **two-phase async pattern** to minimize client l
 PENDING → SUBMITTING → SENT → MATCHED     (happy path)
 PENDING → SUBMITTING → FAILED              (all 3 retries failed)
 FAILED  → PENDING → SUBMITTING → SENT      (manual retry success)
+SENT    → (status unchanged)               (MT548 unparseable → UNKNOWN, needs manual review)
 ```
 
 ## API Endpoints
@@ -451,7 +457,7 @@ FAILED  → PENDING → SUBMITTING → SENT      (manual retry success)
 | `POST` | `/api/settlement/{tradeRef}/retry` | Manual retry for FAILED instructions |
 | `GET` | `/api/mq/health` | IBM MQ connection health check |
 | `POST` | `/api/mq/test-mdb` | Send test MT548 to verify MDB processing |
-| `GET` | `/api/mq/stats` | MDB processing metrics + live queue depth/consumer status |
+| `GET` | `/api/mq/stats` | MDB + reconciliation metrics + live queue depth/consumer status |
 
 ## Configuration
 
@@ -472,7 +478,7 @@ Application properties (`settlement.properties`):
 
 | Property | Default | Description |
 |----------|---------|-------------|
-| `settlement.alert.webhook.enabled` | `false` | Enable webhook alerts for retry exhaustion |
+| `settlement.alert.webhook.enabled` | `false` | Enable webhook alerts for retry exhaustion and unparseable MT548 |
 | `settlement.alert.webhook.url` | (empty) | Webhook URL (Slack, PagerDuty, DingTalk, etc.) |
 | `mq.monitor.host` | `${MQ_HOST:localhost}` | MQ host for PCF admin queries |
 | `mq.monitor.port` | `${MQ_PORT:1414}` | MQ port for PCF admin queries |
@@ -500,6 +506,7 @@ The activation spec configures `maxPoolDepth="5"`, which controls the maximum nu
 
 `GET /api/mq/stats` provides live operational visibility:
 - **MDB counters** — total received/success/failed messages with timestamps (in-memory, reset on restart)
+- **Reconciliation counters** — MT548 processing outcomes: matched/failed/pending/unknown/unmatched (in-memory, reset on restart). A non-zero `totalUnknown` indicates MT548 messages that could not be parsed and require manual review
 - **Queue status** — current depth, max depth, open input/output handles, last put/get times (live from MQ via PCF admin commands)
 
 ## Monitoring (Prometheus + Grafana)
@@ -536,6 +543,7 @@ The project includes a full observability stack via Docker:
 - Liberty HTTP request rate
 - Liberty connection pool usage
 - JVM heap memory
+- MT548 reconciliation status breakdown (matched/failed/pending/unknown)
 
 **Usage:**
 

@@ -11,6 +11,7 @@ import com.settlement.dao.AuditLogDao;
 import com.settlement.dao.BondHoldingDao;
 import com.settlement.dao.SettlementInstructionDao;
 import com.settlement.entity.*;
+import com.settlement.service.AlertWebhookService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -33,40 +34,48 @@ public class ReconciliationService implements ReconciliationHandler {
     private final SettlementInstructionDao instructionDao;
     private final BondHoldingDao holdingDao;
     private final AuditLogDao auditLogDao;
+    private final ReconciliationMetrics metrics;
+    private final AlertWebhookService alertService;
 
     public ReconciliationService(SettlementInstructionDao instructionDao,
                                  BondHoldingDao holdingDao,
-                                 AuditLogDao auditLogDao) {
+                                 AuditLogDao auditLogDao,
+                                 ReconciliationMetrics metrics,
+                                 AlertWebhookService alertService) {
         this.instructionDao = instructionDao;
         this.holdingDao = holdingDao;
         this.auditLogDao = auditLogDao;
+        this.metrics = metrics;
+        this.alertService = alertService;
     }
 
     @Transactional
     public void processSwiftReply(String correlationId, String mt548RawMessage) {
         log.info("Processing SWIFT reply for correlationId={}", correlationId);
 
-        // Parse the trade reference from the MT548 or fall back to correlationId
-        String tradeRef = extractTradeRef(mt548RawMessage, correlationId);
+        String sanitised = sanitiseSwiftMessage(mt548RawMessage);
+
+        String tradeRef = extractTradeRef(sanitised, correlationId);
 
         Optional<SettlementInstruction> optInstruction = instructionDao.findByTradeRef(tradeRef);
         if (optInstruction.isEmpty()) {
             log.warn("No matching instruction found for tradeRef={}", tradeRef);
             auditLogDao.save(new AuditLog(tradeRef, AuditEventType.RECONCILE_UNMATCHED,
                     "No instruction found for incoming MT548"));
+            metrics.recordUnmatched();
             return;
         }
 
         SettlementInstruction instruction = optInstruction.get();
         instruction.setMt548Raw(mt548RawMessage);
 
-        // Extract settlement status from MT548
-        SettlementStatus status = extractSettlementStatus(mt548RawMessage);
+        SettlementStatus status = extractSettlementStatus(sanitised);
 
         switch (status) {
             case MATCHED -> handleMatched(instruction);
             case FAILED -> handleFailed(instruction);
             case PENDING -> handlePending(instruction);
+            case UNKNOWN -> handleUnknownStatus(instruction, sanitised);
         }
 
         instructionDao.save(instruction);
@@ -80,6 +89,7 @@ public class ReconciliationService implements ReconciliationHandler {
                 " QTY=" + instruction.getQuantity() +
                 " DIR=" + instruction.getDirection()));
         log.info("Settlement MATCHED: tradeRef={}", instruction.getTradeRef());
+        metrics.recordMatched();
     }
 
     private void handleFailed(SettlementInstruction instruction) {
@@ -87,12 +97,25 @@ public class ReconciliationService implements ReconciliationHandler {
         auditLogDao.save(new AuditLog(instruction.getTradeRef(), AuditEventType.SETTLEMENT_FAILED,
                 "Settlement failed for ISIN=" + instruction.getIsin()));
         log.warn("Settlement FAILED: tradeRef={}", instruction.getTradeRef());
+        metrics.recordFailed();
     }
 
     private void handlePending(SettlementInstruction instruction) {
         auditLogDao.save(new AuditLog(instruction.getTradeRef(), AuditEventType.SETTLEMENT_PENDING,
                 "Settlement still pending for ISIN=" + instruction.getIsin()));
         log.info("Settlement still PENDING: tradeRef={}", instruction.getTradeRef());
+        metrics.recordPending();
+    }
+
+    private void handleUnknownStatus(SettlementInstruction instruction, String rawMessage) {
+        auditLogDao.save(new AuditLog(instruction.getTradeRef(), AuditEventType.SETTLEMENT_STATUS_UNKNOWN,
+                "Unable to parse settlement status from MT548 for ISIN=" + instruction.getIsin()
+                        + ", requires manual review"));
+        log.error("Settlement status UNKNOWN (unparseable MT548): tradeRef={}, rawLength={}",
+                instruction.getTradeRef(),
+                rawMessage != null ? rawMessage.length() : 0);
+        metrics.recordUnknown();
+        alertService.sendUnknownStatusAlert(instruction.getTradeRef(), instruction.getIsin());
     }
 
     private void updateHoldings(SettlementInstruction instruction) {
@@ -127,6 +150,40 @@ public class ReconciliationService implements ReconciliationHandler {
         holdingDao.save(holding);
         log.info("Holdings updated: account={}, isin={}, newQty={}", accountId, isin, holding.getQuantity());
     }
+
+    /**
+     * Normalises a raw SWIFT FIN message so that minor transport-level
+     * corruptions (wrong line endings, stray NUL bytes, BOM, etc.) do not
+     * cause Prowide or regex-based parsing to fail.
+     *
+     * <p>The original (un-sanitised) message is still persisted on the
+     * instruction for audit purposes; only the sanitised copy is used for
+     * field extraction.</p>
+     */
+    static String sanitiseSwiftMessage(String raw) {
+        if (raw == null || raw.isEmpty()) return raw;
+
+        String s = raw;
+
+        if (s.charAt(0) == '\uFEFF') {
+            s = s.substring(1);
+        }
+
+        // Remove NUL bytes (common in fixed-length MQ messages)
+        s = s.replace("\0", "");
+
+        // Normalise line endings to SWIFT FIN standard (\r\n)
+        s = s.replace("\r\n", "\n")   // collapse existing \r\n first
+             .replace("\r", "\n")     // handle bare \r
+             .replace("\n", "\r\n");  // then convert all to \r\n
+
+        // Trim trailing whitespace from each line (some gateways pad with spaces)
+        s = TRAILING_WS.matcher(s).replaceAll("$1");
+
+        return s.strip();
+    }
+
+    private static final Pattern TRAILING_WS = Pattern.compile("[ \\t]+(\\r?\\n)");
 
     private String extractTradeRef(String mt548Raw, String fallbackCorrelationId) {
         try {
@@ -178,25 +235,25 @@ public class ReconciliationService implements ReconciliationHandler {
                 }
             }
         } catch (Exception e) {
-            log.debug("Prowide parsing failed, trying text-based extraction", e);
+            log.warn("Prowide parsing failed for MT548 status extraction, falling back to raw text", e);
         }
-        // Fallback: raw text pattern matching for :25D:: field
         return extractStatusFromRawText(mt548Raw);
     }
 
+    private static final Pattern STATUS_PATTERN = Pattern.compile(
+            ":" + SwiftConst.TAG_25D + "::" + SwiftConst.MTCH + "//([A-Z]{4})");
+
     private SettlementStatus extractStatusFromRawText(String rawMessage) {
         if (rawMessage == null) {
-            return SettlementStatus.PENDING;
+            log.warn("Cannot extract status from null MT548 message");
+            return SettlementStatus.UNKNOWN;
         }
-        String upper = rawMessage.toUpperCase();
-        if (upper.contains("//" + SwiftConst.MATC) || upper.contains("//" + SwiftConst.MACH)) {
-            return SettlementStatus.MATCHED;
-        } else if (upper.contains("//" + SwiftConst.REJT)
-                || upper.contains("//" + SwiftConst.NMAT)
-                || upper.contains("//" + SwiftConst.CANC)) {
-            return SettlementStatus.FAILED;
+        Matcher m = STATUS_PATTERN.matcher(rawMessage.toUpperCase());
+        if (m.find()) {
+            return mapStatusCode(m.group(1));
         }
-        return SettlementStatus.PENDING;
+        log.warn("Unable to extract settlement status from raw MT548 — no :25D::MTCH// pattern found");
+        return SettlementStatus.UNKNOWN;
     }
 
     private SettlementStatus mapStatusCode(String statusCode) {
@@ -210,6 +267,7 @@ public class ReconciliationService implements ReconciliationHandler {
     private enum SettlementStatus {
         MATCHED,
         FAILED,
-        PENDING
+        PENDING,
+        UNKNOWN
     }
 }

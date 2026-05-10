@@ -161,9 +161,9 @@ paths:
     get:
       summary: MDB processing metrics and queue status
       description: |
-        Returns in-memory MDB processing counters (reset on restart) and live
-        queue statistics from IBM MQ via PCF admin commands. Covers SWIFT.REPLY.QUEUE,
-        SWIFT.SEND.QUEUE, and SWIFT.DLQ.
+        Returns in-memory MDB processing counters, MT548 reconciliation metrics
+        (reset on restart), and live queue statistics from IBM MQ via PCF admin
+        commands. Covers SWIFT.REPLY.QUEUE, SWIFT.SEND.QUEUE, and SWIFT.DLQ.
       operationId: mqStats
       responses:
         '200':
@@ -181,6 +181,15 @@ paths:
                   lastReceivedAt: "2026-05-10T07:09:55Z"
                   lastSuccessAt: "2026-05-10T07:09:55Z"
                   lastFailedAt: "2026-05-10T06:30:12Z"
+                reconciliation:
+                  totalProcessed: 1230
+                  totalMatched: 1200
+                  totalFailed: 15
+                  totalPending: 10
+                  totalUnknown: 2
+                  totalUnmatched: 3
+                  lastProcessedAt: "2026-05-10T07:09:55Z"
+                  lastUnknownAt: "2026-05-10T06:15:22Z"
                 queues:
                   SWIFT.REPLY.QUEUE:
                     currentDepth: 3
@@ -369,10 +378,51 @@ components:
           format: date-time
         mdb:
           $ref: '#/components/schemas/MdbMetrics'
+        reconciliation:
+          $ref: '#/components/schemas/ReconciliationMetrics'
         queues:
           type: object
           additionalProperties:
             $ref: '#/components/schemas/QueueStatus'
+
+    ReconciliationMetrics:
+      type: object
+      description: MT548 reconciliation outcome counters (in-memory, reset on restart)
+      properties:
+        totalProcessed:
+          type: integer
+          format: int64
+          description: Total MT548 replies processed
+        totalMatched:
+          type: integer
+          format: int64
+          description: Settlement confirmed (MATC/MACH status)
+        totalFailed:
+          type: integer
+          format: int64
+          description: Settlement rejected (REJT/NMAT/CANC status)
+        totalPending:
+          type: integer
+          format: int64
+          description: Settlement still pending at CSD
+        totalUnknown:
+          type: integer
+          format: int64
+          description: MT548 could not be parsed — requires manual review. Triggers webhook alert.
+        totalUnmatched:
+          type: integer
+          format: int64
+          description: No matching instruction found for incoming MT548
+        lastProcessedAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: ISO timestamp of last processed MT548
+        lastUnknownAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: ISO timestamp of last UNKNOWN status occurrence
 
     MdbMetrics:
       type: object
