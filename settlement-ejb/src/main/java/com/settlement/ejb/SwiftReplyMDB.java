@@ -1,5 +1,6 @@
 package com.settlement.ejb;
 
+import com.settlement.bridge.MdbMetricsHolder;
 import com.settlement.bridge.ServiceRegistry;
 import jakarta.annotation.Resource;
 import jakarta.ejb.ActivationConfigProperty;
@@ -47,9 +48,11 @@ public class SwiftReplyMDB implements MessageListener {
 
     @Override
     public void onMessage(Message message) {
+        MdbMetricsHolder.recordReceived();
         try {
             if (!(message instanceof TextMessage textMessage)) {
                 log.warn("Received non-text message, ignoring: {}", message.getJMSMessageID());
+                MdbMetricsHolder.recordFailed();
                 return;
             }
             String correlationId = textMessage.getJMSCorrelationID();
@@ -61,17 +64,21 @@ public class SwiftReplyMDB implements MessageListener {
             Object reconciliationService = ServiceRegistry.lookup("reconciliationService", Object.class);
             if (reconciliationService == null) {
                 log.error("ReconciliationService not available via ServiceRegistry, rolling back message");
+                MdbMetricsHolder.recordFailed();
                 mdbContext.setRollbackOnly();
                 return;
             }
 
             invokeProcessSwiftReply(reconciliationService, correlationId, messageBody);
+            MdbMetricsHolder.recordSuccess();
 
         } catch (JMSException e) {
             log.error("Error processing JMS message", e);
+            MdbMetricsHolder.recordFailed();
             mdbContext.setRollbackOnly();
         } catch (Exception e) {
             log.error("Unexpected error in MDB processing", e);
+            MdbMetricsHolder.recordFailed();
             mdbContext.setRollbackOnly();
         }
     }
