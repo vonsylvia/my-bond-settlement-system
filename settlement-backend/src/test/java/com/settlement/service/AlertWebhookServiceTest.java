@@ -31,7 +31,8 @@ class AlertWebhookServiceTest {
 
     @BeforeEach
     void setUp() {
-        service = new AlertWebhookService(Runnable::run, mockHttpClient);
+        service = new AlertWebhookService(Runnable::run);
+        ReflectionTestUtils.setField(service, "httpClient", mockHttpClient);
 
         instruction = new SettlementInstruction();
         instruction.setTradeRef("TR-ALERT001");

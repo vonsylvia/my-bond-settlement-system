@@ -14,8 +14,9 @@ public class AuditLog {
     @Column(name = "TRADE_REF", length = 50)
     private String tradeRef;
 
+    @Enumerated(EnumType.STRING)
     @Column(name = "EVENT_TYPE", nullable = false, length = 50)
-    private String eventType;
+    private AuditEventType eventType;
 
     @Lob
     @Column(name = "DETAIL")
@@ -32,7 +33,7 @@ public class AuditLog {
     public AuditLog() {
     }
 
-    public AuditLog(String tradeRef, String eventType, String detail) {
+    public AuditLog(String tradeRef, AuditEventType eventType, String detail) {
         this.tradeRef = tradeRef;
         this.eventType = eventType;
         this.detail = detail;
@@ -54,11 +55,11 @@ public class AuditLog {
         this.tradeRef = tradeRef;
     }
 
-    public String getEventType() {
+    public AuditEventType getEventType() {
         return eventType;
     }
 
-    public void setEventType(String eventType) {
+    public void setEventType(AuditEventType eventType) {
         this.eventType = eventType;
     }
 

@@ -2,6 +2,7 @@ package com.settlement.service;
 
 import com.settlement.dao.AuditLogDao;
 import com.settlement.dao.SettlementInstructionDao;
+import com.settlement.entity.AuditEventType;
 import com.settlement.entity.AuditLog;
 import com.settlement.entity.InstructionStatus;
 import com.settlement.entity.SettlementInstruction;
@@ -11,7 +12,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -67,61 +67,50 @@ public class SettlementXaExecutor {
         instruction.setRetryCount(0);
         instructionDao.save(instruction);
 
-        auditLogDao.save(new AuditLog(tradeRef, "INSTRUCTION_SENT",
+        auditLogDao.save(new AuditLog(tradeRef, AuditEventType.INSTRUCTION_SENT,
                 "MT541 sent via async XA"));
 
         log.info("Async settlement completed: tradeRef={}", tradeRef);
     }
 
     @Transactional
-    public void recordFailure(String tradeRef, int attempt, Exception e,
+    public void recordFailure(String tradeRef, int attempt, String errorMessage,
                               boolean exhausted, int maxRetryCount) {
-        SettlementInstruction instruction = instructionDao.findByTradeRef(tradeRef)
-                .orElse(null);
-        if (instruction == null) return;
+        String reason = (errorMessage != null && errorMessage.length() > 1000)
+                ? errorMessage.substring(0, 1000)
+                : errorMessage;
 
-        String reason = e.getMessage();
-        if (reason != null && reason.length() > 1000) {
-            reason = reason.substring(0, 1000);
+        int updated = instructionDao.updateFailure(tradeRef, attempt, reason);
+        if (updated == 0) {
+            log.warn("recordFailure: instruction not found, skipping: tradeRef={}", tradeRef);
+            return;
         }
 
-        instruction.setRetryCount(attempt);
-        instruction.setFailureReason(reason);
-        instruction.setStatus(InstructionStatus.FAILED);
-        instructionDao.save(instruction);
-
-        String eventType = exhausted ? "RETRIES_EXHAUSTED" : "INSTRUCTION_FAILED";
+        AuditEventType eventType = exhausted ? AuditEventType.RETRIES_EXHAUSTED : AuditEventType.INSTRUCTION_FAILED;
         String detail = String.format("Async XA failed (attempt %d/%d): %s",
                 attempt, maxRetryCount, reason);
         auditLogDao.save(new AuditLog(tradeRef, eventType, detail));
     }
 
     /**
-     * Crash-recovery: reset orphaned SUBMITTING instructions back to PENDING.
+     * Crash-recovery: reset orphaned SUBMITTING instructions back to PENDING,
+     * then return all PENDING trade refs (including just-reset ones) for re-processing.
      */
     @Transactional
     public List<String> recoverOrphanedInstructions() {
-        List<SettlementInstruction> submitting =
-                instructionDao.findByStatus(InstructionStatus.SUBMITTING);
-        for (SettlementInstruction instr : submitting) {
-            log.warn("Recovering orphaned SUBMITTING instruction: tradeRef={}",
-                    instr.getTradeRef());
-            instr.setStatus(InstructionStatus.PENDING);
-            instructionDao.save(instr);
+        int resetCount = instructionDao.bulkUpdateStatus(InstructionStatus.SUBMITTING, InstructionStatus.PENDING);
+        if (resetCount > 0) {
+            log.warn("Recovered {} orphaned SUBMITTING instruction(s) to PENDING", resetCount);
         }
 
         List<SettlementInstruction> pending =
                 instructionDao.findByStatus(InstructionStatus.PENDING);
 
-        List<String> tradeRefs = new ArrayList<>();
-        for (SettlementInstruction instr : submitting) {
-            tradeRefs.add(instr.getTradeRef());
+        List<String> tradeRefs = pending.stream().map(SettlementInstruction::getTradeRef).toList();
+        if (!tradeRefs.isEmpty()) {
+            log.warn("Re-queuing {} orphaned PENDING instruction(s): {}", tradeRefs.size(), tradeRefs);
         }
-        for (SettlementInstruction instr : pending) {
-            log.warn("Recovering orphaned PENDING instruction: tradeRef={}",
-                    instr.getTradeRef());
-            tradeRefs.add(instr.getTradeRef());
-        }
+
         return tradeRefs;
     }
 

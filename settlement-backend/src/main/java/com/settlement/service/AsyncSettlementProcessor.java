@@ -65,7 +65,7 @@ public class AsyncSettlementProcessor {
 
                 boolean exhausted = (attempt >= MAX_RETRY_COUNT);
                 try {
-                    xaExecutor.recordFailure(tradeRef, attempt, e, exhausted, MAX_RETRY_COUNT);
+                    xaExecutor.recordFailure(tradeRef, attempt, e.getMessage(), exhausted, MAX_RETRY_COUNT);
                 } catch (Exception dbEx) {
                     log.error("Failed to record failure in DB: tradeRef={}", tradeRef, dbEx);
                 }
