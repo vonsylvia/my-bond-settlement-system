@@ -80,8 +80,7 @@ class SettlementXaExecutorIT {
     void recordFailure_shouldPersistFailureInfo() {
         createAndSave("TR-XA-IT-003");
 
-        xaExecutor.recordFailure("TR-XA-IT-003", 2,
-                new RuntimeException("timeout"), false, 3);
+        xaExecutor.recordFailure("TR-XA-IT-003", 2, "timeout", false, 3);
 
         Optional<SettlementInstruction> updated = instructionDao.findByTradeRef("TR-XA-IT-003");
         assertThat(updated).isPresent();

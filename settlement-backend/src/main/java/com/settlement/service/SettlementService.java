@@ -66,7 +66,7 @@ public class SettlementService {
 
         instructionDao.save(instruction);
 
-        auditLogDao.save(new AuditLog(tradeRef, "INSTRUCTION_CREATED",
+        auditLogDao.save(new AuditLog(tradeRef, AuditEventType.INSTRUCTION_CREATED,
                 "Instruction saved, async XA processing queued. ISIN=" + request.getIsin()
                         + " QTY=" + request.getQuantity()));
 
@@ -105,7 +105,7 @@ public class SettlementService {
         instruction.setFailureReason(null);
         instructionDao.save(instruction);
 
-        auditLogDao.save(new AuditLog(tradeRef, "MANUAL_RETRY",
+        auditLogDao.save(new AuditLog(tradeRef, AuditEventType.MANUAL_RETRY,
                 "Manual retry triggered, status reset to PENDING"));
 
         log.info("Manual retry triggered: tradeRef={}", tradeRef);

@@ -2,6 +2,7 @@ package com.settlement.service;
 
 import com.settlement.dao.AuditLogDao;
 import com.settlement.dao.SettlementInstructionDao;
+import com.settlement.entity.AuditEventType;
 import com.settlement.entity.AuditLog;
 import com.settlement.entity.InstructionStatus;
 import com.settlement.entity.SettlementInstruction;
@@ -66,19 +67,18 @@ public class SettlementXaExecutor {
         instruction.setRetryCount(0);
         instructionDao.save(instruction);
 
-        auditLogDao.save(new AuditLog(tradeRef, "INSTRUCTION_SENT",
+        auditLogDao.save(new AuditLog(tradeRef, AuditEventType.INSTRUCTION_SENT,
                 "MT541 sent via async XA"));
 
         log.info("Async settlement completed: tradeRef={}", tradeRef);
     }
 
     @Transactional
-    public void recordFailure(String tradeRef, int attempt, Exception e,
+    public void recordFailure(String tradeRef, int attempt, String errorMessage,
                               boolean exhausted, int maxRetryCount) {
-        String reason = e.getMessage();
-        if (reason != null && reason.length() > 1000) {
-            reason = reason.substring(0, 1000);
-        }
+        String reason = (errorMessage != null && errorMessage.length() > 1000)
+                ? errorMessage.substring(0, 1000)
+                : errorMessage;
 
         int updated = instructionDao.updateFailure(tradeRef, attempt, reason);
         if (updated == 0) {
@@ -86,7 +86,7 @@ public class SettlementXaExecutor {
             return;
         }
 
-        String eventType = exhausted ? "RETRIES_EXHAUSTED" : "INSTRUCTION_FAILED";
+        AuditEventType eventType = exhausted ? AuditEventType.RETRIES_EXHAUSTED : AuditEventType.INSTRUCTION_FAILED;
         String detail = String.format("Async XA failed (attempt %d/%d): %s",
                 attempt, maxRetryCount, reason);
         auditLogDao.save(new AuditLog(tradeRef, eventType, detail));

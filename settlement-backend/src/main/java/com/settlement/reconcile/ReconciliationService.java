@@ -48,7 +48,7 @@ public class ReconciliationService {
         Optional<SettlementInstruction> optInstruction = instructionDao.findByTradeRef(tradeRef);
         if (optInstruction.isEmpty()) {
             log.warn("No matching instruction found for tradeRef={}", tradeRef);
-            auditLogDao.save(new AuditLog(tradeRef, "RECONCILE_UNMATCHED",
+            auditLogDao.save(new AuditLog(tradeRef, AuditEventType.RECONCILE_UNMATCHED,
                     "No instruction found for incoming MT548"));
             return;
         }
@@ -71,7 +71,7 @@ public class ReconciliationService {
     private void handleMatched(SettlementInstruction instruction) {
         instruction.setStatus(InstructionStatus.MATCHED);
         updateHoldings(instruction);
-        auditLogDao.save(new AuditLog(instruction.getTradeRef(), "SETTLEMENT_MATCHED",
+        auditLogDao.save(new AuditLog(instruction.getTradeRef(), AuditEventType.SETTLEMENT_MATCHED,
                 "Settlement confirmed: ISIN=" + instruction.getIsin() +
                 " QTY=" + instruction.getQuantity() +
                 " DIR=" + instruction.getDirection()));
@@ -80,13 +80,13 @@ public class ReconciliationService {
 
     private void handleFailed(SettlementInstruction instruction) {
         instruction.setStatus(InstructionStatus.FAILED);
-        auditLogDao.save(new AuditLog(instruction.getTradeRef(), "SETTLEMENT_FAILED",
+        auditLogDao.save(new AuditLog(instruction.getTradeRef(), AuditEventType.SETTLEMENT_FAILED,
                 "Settlement failed for ISIN=" + instruction.getIsin()));
         log.warn("Settlement FAILED: tradeRef={}", instruction.getTradeRef());
     }
 
     private void handlePending(SettlementInstruction instruction) {
-        auditLogDao.save(new AuditLog(instruction.getTradeRef(), "SETTLEMENT_PENDING",
+        auditLogDao.save(new AuditLog(instruction.getTradeRef(), AuditEventType.SETTLEMENT_PENDING,
                 "Settlement still pending for ISIN=" + instruction.getIsin()));
         log.info("Settlement still PENDING: tradeRef={}", instruction.getTradeRef());
     }
