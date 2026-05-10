@@ -22,7 +22,7 @@ services:
       retries: 10
       start_period: 60s
 
-  # IBM MQ
+  # IBM MQ (with built-in Prometheus metrics on port 9157)
   ibmmq:
     image: icr.io/ibm-messaging/mq:latest
     container_name: settlement-mq
@@ -31,9 +31,11 @@ services:
       MQ_QMGR_NAME: SETTLEMENT_QM
       MQ_APP_PASSWORD: passw0rd
       MQ_ADMIN_PASSWORD: passw0rd
+      MQ_ENABLE_METRICS: "true"
     ports:
       - "1414:1414"
       - "9443:9443"
+      - "9157:9157"
     volumes:
       - mq-data:/mnt/mqm
       - ./docker/mq/config.mqsc:/etc/mqm/config.mqsc
@@ -69,6 +71,45 @@ services:
       MQ_HOST: ibmmq
       MQ_PORT: 1414
 
+  # ==================== Monitoring Stack (profile: monitoring) ====================
+
+  # Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: settlement-prometheus
+    profiles: ["monitoring"]
+    volumes:
+      - ./docker/monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - liberty
+      - ibmmq
+    environment:
+      TZ: Asia/Shanghai
+
+  # Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: settlement-grafana
+    profiles: ["monitoring"]
+    volumes:
+      - ./docker/monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    environment:
+      TZ: Asia/Shanghai
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+
 volumes:
   oracle-data:
   mq-data:
+  prometheus-data:
+  grafana-data:

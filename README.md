@@ -502,6 +502,57 @@ The activation spec configures `maxPoolDepth="5"`, which controls the maximum nu
 - **MDB counters** — total received/success/failed messages with timestamps (in-memory, reset on restart)
 - **Queue status** — current depth, max depth, open input/output handles, last put/get times (live from MQ via PCF admin commands)
 
+## Monitoring (Prometheus + Grafana)
+
+The project includes a full observability stack via Docker:
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Grafana | http://localhost:3000 | admin / admin |
+| Prometheus | http://localhost:9090 | (none) |
+| Liberty Metrics | http://localhost:9080/metrics | (none) |
+| MQ Metrics | http://localhost:9157/metrics | (none) |
+
+**Architecture:**
+
+```
+┌─────────────┐     /metrics      ┌────────────┐     scrape     ┌─────────┐
+│   Liberty   │──────────────────▶│ Prometheus │◀───────────────│  MQ     │
+│ (mpMetrics) │                   │            │                │ Exporter│
+└─────────────┘                   └─────┬──────┘                └────┬────┘
+                                        │                            │
+                                        ▼                            │
+                                  ┌──────────┐              ┌───────▼───────┐
+                                  │ Grafana  │              │    IBM MQ     │
+                                  │Dashboard │              │ (PCF queries) │
+                                  └──────────┘              └───────────────┘
+```
+
+**Pre-configured Grafana Dashboard includes:**
+- MQ queue depth (SWIFT.REPLY.QUEUE, SWIFT.SEND.QUEUE)
+- Dead Letter Queue depth (with color thresholds)
+- MQ consumer count (open input handles)
+- Message put/get rates
+- Liberty HTTP request rate
+- Liberty connection pool usage
+- JVM heap memory
+
+**Usage:**
+
+```bash
+# Start core services only (Oracle + MQ + Liberty)
+docker compose up -d
+
+# Start with monitoring stack (adds Prometheus + Grafana)
+docker compose --profile monitoring up -d
+```
+
+**Liberty MicroProfile Metrics** (`mpMetrics-5.1` + `monitor-1.0`) automatically exposes:
+- JVM metrics (heap, GC, threads)
+- HTTP servlet request counts and response times
+- Connection pool statistics (Oracle DS, MQ CF)
+- REST request metrics
+
 ## Troubleshooting
 
 ### Liberty startup slow
