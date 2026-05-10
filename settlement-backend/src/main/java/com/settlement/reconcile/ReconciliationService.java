@@ -5,6 +5,7 @@ import com.prowidesoftware.swift.model.SwiftTagListBlock;
 import com.prowidesoftware.swift.model.Tag;
 import com.prowidesoftware.swift.model.field.Field20C;
 import com.prowidesoftware.swift.model.field.Field25D;
+import com.settlement.bridge.ReconciliationHandler;
 import com.settlement.dao.AuditLogDao;
 import com.settlement.dao.BondHoldingDao;
 import com.settlement.dao.SettlementInstructionDao;
@@ -22,7 +23,7 @@ import java.util.Optional;
  * reconciles against original instructions, and updates bond holdings.
  */
 @Service
-public class ReconciliationService {
+public class ReconciliationService implements ReconciliationHandler {
 
     private static final Logger log = LoggerFactory.getLogger(ReconciliationService.class);
 
