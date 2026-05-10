@@ -6,6 +6,7 @@ import com.prowidesoftware.swift.model.Tag;
 import com.prowidesoftware.swift.model.field.Field20C;
 import com.prowidesoftware.swift.model.field.Field25D;
 import com.settlement.bridge.ReconciliationHandler;
+import com.settlement.swift.SwiftConst;
 import com.settlement.dao.AuditLogDao;
 import com.settlement.dao.BondHoldingDao;
 import com.settlement.dao.SettlementInstructionDao;
@@ -17,6 +18,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.util.Optional;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Processes SWIFT MT548 (Settlement Status and Processing Advice) replies,
@@ -130,7 +133,7 @@ public class ReconciliationService implements ReconciliationHandler {
             SwiftMessage swiftMsg = SwiftMessage.parse(mt548Raw);
             if (swiftMsg != null && swiftMsg.getBlock4() != null) {
                 SwiftTagListBlock block4 = swiftMsg.getBlock4();
-                Tag tag20C = block4.getTagByName("20C");
+                Tag tag20C = block4.getTagByName(SwiftConst.TAG_20C);
                 if (tag20C != null) {
                     Field20C field = new Field20C(tag20C.getValue());
                     String value = field.getComponent(2);
@@ -142,7 +145,6 @@ public class ReconciliationService implements ReconciliationHandler {
         } catch (Exception e) {
             log.debug("Prowide parsing failed, trying raw text extraction", e);
         }
-        // Fallback: regex extraction for :20C::SEME//TRADE-REF pattern
         String rawRef = extractTradeRefFromRawText(mt548Raw);
         if (rawRef != null) {
             return rawRef;
@@ -152,8 +154,8 @@ public class ReconciliationService implements ReconciliationHandler {
 
     private String extractTradeRefFromRawText(String rawMessage) {
         if (rawMessage == null) return null;
-        java.util.regex.Matcher m = java.util.regex.Pattern
-                .compile(":20C::SEME//([A-Za-z0-9\\-]+)")
+        Matcher m = Pattern
+                .compile(":" + SwiftConst.TAG_20C + "::" + SwiftConst.SEME + "//([A-Za-z0-9\\-]+)")
                 .matcher(rawMessage);
         if (m.find()) {
             return m.group(1);
@@ -166,7 +168,7 @@ public class ReconciliationService implements ReconciliationHandler {
             SwiftMessage swiftMsg = SwiftMessage.parse(mt548Raw);
             if (swiftMsg != null && swiftMsg.getBlock4() != null) {
                 SwiftTagListBlock block4 = swiftMsg.getBlock4();
-                Tag tag25D = block4.getTagByName("25D");
+                Tag tag25D = block4.getTagByName(SwiftConst.TAG_25D);
                 if (tag25D != null) {
                     Field25D field = new Field25D(tag25D.getValue());
                     String statusCode = field.getComponent(2);
@@ -187,9 +189,11 @@ public class ReconciliationService implements ReconciliationHandler {
             return SettlementStatus.PENDING;
         }
         String upper = rawMessage.toUpperCase();
-        if (upper.contains("//MATC") || upper.contains("//MACH")) {
+        if (upper.contains("//" + SwiftConst.MATC) || upper.contains("//" + SwiftConst.MACH)) {
             return SettlementStatus.MATCHED;
-        } else if (upper.contains("//REJT") || upper.contains("//NMAT") || upper.contains("//CANC")) {
+        } else if (upper.contains("//" + SwiftConst.REJT)
+                || upper.contains("//" + SwiftConst.NMAT)
+                || upper.contains("//" + SwiftConst.CANC)) {
             return SettlementStatus.FAILED;
         }
         return SettlementStatus.PENDING;
@@ -197,8 +201,8 @@ public class ReconciliationService implements ReconciliationHandler {
 
     private SettlementStatus mapStatusCode(String statusCode) {
         return switch (statusCode.toUpperCase()) {
-            case "MACH", "MATC" -> SettlementStatus.MATCHED;
-            case "NMAT", "REJT", "CANC" -> SettlementStatus.FAILED;
+            case SwiftConst.MACH, SwiftConst.MATC -> SettlementStatus.MATCHED;
+            case SwiftConst.NMAT, SwiftConst.REJT, SwiftConst.CANC -> SettlementStatus.FAILED;
             default -> SettlementStatus.PENDING;
         };
     }
