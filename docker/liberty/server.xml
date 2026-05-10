@@ -20,6 +20,8 @@
         <feature>mdb-4.0</feature>
         <feature>localConnector-1.0</feature>
         <feature>concurrent-3.0</feature>
+        <feature>mpMetrics-5.1</feature>
+        <feature>monitor-1.0</feature>
     </featureManager>
 
     <!-- Local user registry -->
@@ -108,6 +110,9 @@
                            name="bond-settlement">
         <classloader apiTypeVisibility="spec, ibm-api, third-party"/>
     </enterpriseApplication>
+
+    <!-- MicroProfile Metrics: allow unauthenticated access for Prometheus scraping -->
+    <mpMetrics authentication="false"/>
 
     <!-- Logging -->
     <logging consoleLogLevel="INFO"

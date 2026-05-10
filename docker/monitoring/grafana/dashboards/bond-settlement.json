@@ -1,0 +1,270 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "IBM MQ - Put/Get Message Rates (QM-level)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "rate(ibmmq_qmgr_mqput_mqput1_total[5m])",
+          "legendFormat": "PUT (total)",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(ibmmq_qmgr_destructive_get_total[5m])",
+          "legendFormat": "GET (total)",
+          "refId": "B"
+        },
+        {
+          "expr": "rate(ibmmq_qmgr_persistent_message_mqput_total[5m])",
+          "legendFormat": "PUT (persistent)",
+          "refId": "C"
+        },
+        {
+          "expr": "rate(ibmmq_qmgr_persistent_message_destructive_get_total[5m])",
+          "legendFormat": "GET (persistent)",
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "title": "IBM MQ - Errors & Failures",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(ibmmq_qmgr_failed_mqput_total[5m])",
+          "legendFormat": "Failed PUT",
+          "refId": "A"
+        },
+        {
+          "expr": "rate(ibmmq_qmgr_failed_mqget_total[5m])",
+          "legendFormat": "Failed GET",
+          "refId": "B"
+        },
+        {
+          "expr": "rate(ibmmq_qmgr_failed_mqconn_mqconnx_total[5m])",
+          "legendFormat": "Failed CONNECT",
+          "refId": "C"
+        },
+        {
+          "expr": "ibmmq_qmgr_expired_message_total",
+          "legendFormat": "Expired Messages",
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "title": "MQ Queue Status (via REST /api/mq/stats)",
+      "type": "text",
+      "gridPos": { "h": 4, "w": 24, "x": 0, "y": 8 },
+      "options": {
+        "mode": "markdown",
+        "content": "**Queue-level depth and consumer counts** are available via the application REST endpoint:\n\n`GET http://localhost:9080/settlement/api/mq/stats`\n\nThis endpoint uses PCF admin commands to query per-queue metrics (currentDepth, openInputCount, etc.) in real-time."
+      }
+    },
+    {
+      "title": "Liberty - HTTP Request Duration (p50/p95)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "s"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(servlet_responseTime_total_seconds[5m]) / rate(servlet_request_total[5m])",
+          "legendFormat": "Avg Response Time",
+          "refId": "A"
+        },
+        {
+          "expr": "servlet_request_elapsedTime_per_request_seconds",
+          "legendFormat": "{{servlet}} elapsed/req",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "title": "Liberty - HTTP Request Rate",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "reqps"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(servlet_request_total[5m])",
+          "legendFormat": "{{servlet}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Liberty - JVM Heap Memory",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "bytes"
+        }
+      },
+      "targets": [
+        {
+          "expr": "memory_usedHeap_bytes",
+          "legendFormat": "Used Heap",
+          "refId": "A"
+        },
+        {
+          "expr": "memory_maxHeap_bytes",
+          "legendFormat": "Max Heap",
+          "refId": "B"
+        },
+        {
+          "expr": "memory_committedHeap_bytes",
+          "legendFormat": "Committed Heap",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "title": "Liberty - Thread Pool",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "short"
+        }
+      },
+      "targets": [
+        {
+          "expr": "threadpool_activeThreads",
+          "legendFormat": "Active Threads ({{pool}})",
+          "refId": "A"
+        },
+        {
+          "expr": "threadpool_size",
+          "legendFormat": "Pool Size ({{pool}})",
+          "refId": "B"
+        },
+        {
+          "expr": "thread_count",
+          "legendFormat": "Total Thread Count",
+          "refId": "C"
+        }
+      ]
+    },
+    {
+      "title": "Liberty - GC Activity",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "s"
+        }
+      },
+      "targets": [
+        {
+          "expr": "rate(gc_time_seconds[5m])",
+          "legendFormat": "GC Time Rate ({{name}})",
+          "refId": "A"
+        },
+        {
+          "expr": "gc_time_per_cycle_seconds",
+          "legendFormat": "GC Time/Cycle ({{name}})",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "title": "IBM MQ - QM CPU & Connections",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2 },
+          "unit": "percent"
+        }
+      },
+      "targets": [
+        {
+          "expr": "ibmmq_qmgr_cpu_load_one_minute_average_percentage",
+          "legendFormat": "CPU Load 1m",
+          "refId": "A"
+        },
+        {
+          "expr": "ibmmq_qmgr_cpu_load_five_minute_average_percentage",
+          "legendFormat": "CPU Load 5m",
+          "refId": "B"
+        },
+        {
+          "expr": "ibmmq_qmgr_system_cpu_time_estimate_for_queue_manager_percentage",
+          "legendFormat": "QM System CPU",
+          "refId": "C"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["bond-settlement", "mq", "liberty"],
+  "templating": {
+    "list": [
+      {
+        "current": {},
+        "hide": 0,
+        "includeAll": false,
+        "name": "DS_PROMETHEUS",
+        "query": "prometheus",
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Bond Settlement System",
+  "uid": "bond-settlement-main",
+  "version": 2
+}
