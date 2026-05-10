@@ -18,7 +18,7 @@ A complete SWIFT bond settlement system built for IBM WebSphere + Oracle environ
 
 - JDK 21
 - Maven 3.9+
-- Node.js 20+ (for frontend)
+- Node.js 24+ (for frontend)
 - Docker & Docker Compose (for local development)
 
 ### Runtime Stack (provided via Docker)
