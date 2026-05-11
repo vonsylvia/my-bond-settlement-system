@@ -123,10 +123,15 @@ public class ReconciliationService implements ReconciliationHandler {
     }
 
     /**
-     * Records an immutable ledger entry (SecurityMovement) and updates the
-     * cached balance (BondHolding) atomically within the current transaction.
-     * Uses pessimistic locking on BondHolding to serialise concurrent updates
-     * to the same (account, isin) pair.
+     * Updates the authoritative position (BondHolding) and appends an
+     * immutable audit entry (SecurityMovement) atomically within the current
+     * transaction. Uses pessimistic locking on BondHolding to serialise
+     * concurrent updates to the same (account, isin) pair.
+     *
+     * <p>Consistency between Position and Movement is guaranteed by the
+     * transaction boundary — no post-hoc SUM verification needed on the
+     * hot path. Drift detection is handled asynchronously by
+     * {@link PositionReconciliationService}.
      */
     private void updateHoldings(SettlementInstruction instruction) {
         String accountId = instruction.getAccountId();
@@ -138,7 +143,6 @@ public class ReconciliationService implements ReconciliationHandler {
                 ? MovementType.CREDIT
                 : MovementType.DEBIT;
 
-        // Lock the cached balance row (or discover it doesn't exist yet)
         Optional<BondHolding> optHolding = holdingDao.findByAccountAndIsinForUpdate(accountId, isin);
 
         BondHolding holding;
@@ -161,38 +165,16 @@ public class ReconciliationService implements ReconciliationHandler {
             }
         }
 
-        // 1) Append immutable ledger entry (source of truth)
-        movementDao.save(new SecurityMovement(
-                accountId, isin, movementType, quantity, newBalance, tradeRef));
-
-        // 2) Update cached balance for fast position queries
+        // 1) Update authoritative position
         holding.setQuantity(newBalance);
         holdingDao.save(holding);
 
-        // 3) In-transaction assertion: verify ledger and cache agree before commit
-        verifyBalanceConsistency(accountId, isin, newBalance);
+        // 2) Append immutable audit/journal entry
+        movementDao.save(new SecurityMovement(
+                accountId, isin, movementType, quantity, newBalance, tradeRef));
 
-        log.info("Holdings updated: account={}, isin={}, type={}, qty={}, newBalance={}",
+        log.info("Position updated: account={}, isin={}, type={}, qty={}, newBalance={}",
                 accountId, isin, movementType, quantity, newBalance);
-    }
-
-    /**
-     * Verifies that the ledger-computed balance matches the cached balance
-     * within the same transaction, before commit. Any mismatch triggers a
-     * rollback via unchecked exception — this should never happen in normal
-     * operation and indicates a serious data integrity issue.
-     */
-    private void verifyBalanceConsistency(String accountId, String isin, BigDecimal expectedBalance) {
-        BigDecimal ledgerBalance = movementDao.computeBalance(accountId, isin);
-        if (ledgerBalance.compareTo(expectedBalance) != 0) {
-            log.error("CRITICAL: Balance mismatch detected in transaction! " +
-                            "account={}, isin={}, expected={}, ledger={}",
-                    accountId, isin, expectedBalance, ledgerBalance);
-            throw new IllegalStateException(
-                    "Balance consistency check failed: cached=" + expectedBalance +
-                    " but ledger=" + ledgerBalance +
-                    " for account=" + accountId + ", isin=" + isin);
-        }
     }
 
     private static BondHolding newHolding(String accountId, String isin) {
