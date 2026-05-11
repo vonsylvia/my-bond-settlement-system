@@ -31,8 +31,8 @@ paths:
               direction: "BUY"
               accountId: "ACC-001"
       responses:
-        '201':
-          description: Settlement instruction created successfully
+        '202':
+          description: Settlement instruction accepted for async processing
           content:
             application/json:
               schema:
@@ -120,6 +120,57 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/HoldingResponse'
+
+  /api/positions/reconcile:
+    post:
+      summary: Incremental position reconciliation
+      description: |
+        Checks only positions that have had movements since the last daily-close snapshot.
+        Falls back to a full scan if no snapshot exists yet. Does not persist a snapshot.
+      operationId: reconcilePositions
+      responses:
+        '200':
+          description: Reconciliation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationResult'
+              example:
+                reconciledAt: "2026-05-11T22:08:00"
+                type: "INCREMENTAL"
+                totalPositions: 3
+                discrepancyCount: 1
+                consistent: false
+                discrepancies:
+                  - accountId: "ACC-001"
+                    isin: "US0378331005"
+                    cachedBalance: 1000000.00
+                    ledgerBalance: 900000.00
+                    difference: 100000.00
+
+  /api/positions/daily-close:
+    post:
+      summary: End-of-day full reconciliation with snapshot
+      description: |
+        Full scan of all positions comparing cached balances against the ledger.
+        Persists a RECONCILIATION_SNAPSHOT record that becomes the new baseline
+        for subsequent incremental reconciliation calls. Typically triggered by
+        an external job scheduler (cron, Autosys, etc.) at close of business.
+      operationId: dailyClose
+      responses:
+        '200':
+          description: Full reconciliation result (snapshot persisted)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationResult'
+              example:
+                reconciledAt: "2026-05-11T18:00:00"
+                type: "DAILY_CLOSE"
+                totalPositions: 150
+                discrepancyCount: 0
+                consistent: true
+                discrepancies: []
 
   /api/mq/health:
     get:
@@ -293,6 +344,15 @@ components:
         accountId:
           type: string
           example: "ACC-001"
+        retryCount:
+          type: integer
+          description: Number of retry attempts made
+          example: 0
+        failureReason:
+          type: string
+          nullable: true
+          description: Reason for last failure (null if not failed)
+          example: null
         createdAt:
           type: string
           format: date-time
@@ -476,6 +536,61 @@ components:
           type: string
           nullable: true
           description: Date/time of last message get (format YYYY-MM-DD HH:MM:SS)
+
+    ReconciliationResult:
+      type: object
+      description: Result of comparing cached positions against the immutable ledger
+      properties:
+        reconciledAt:
+          type: string
+          format: date-time
+          description: Timestamp when the reconciliation was performed
+        type:
+          type: string
+          enum: [INCREMENTAL, DAILY_CLOSE]
+          description: |
+            INCREMENTAL — only checked positions with movements since last snapshot.
+            DAILY_CLOSE — full scan of all positions, snapshot persisted as new baseline.
+          example: "INCREMENTAL"
+        totalPositions:
+          type: integer
+          description: Total number of distinct (account, isin) positions checked
+          example: 5
+        discrepancyCount:
+          type: integer
+          description: Number of positions where cached balance differs from ledger balance
+          example: 1
+        consistent:
+          type: boolean
+          description: True if all cached balances match ledger balances
+          example: false
+        discrepancies:
+          type: array
+          items:
+            $ref: '#/components/schemas/PositionDiscrepancy'
+
+    PositionDiscrepancy:
+      type: object
+      description: A single position where cached balance and ledger balance do not match
+      properties:
+        accountId:
+          type: string
+          example: "ACC-001"
+        isin:
+          type: string
+          example: "US0378331005"
+        cachedBalance:
+          type: number
+          description: Balance from BOND_HOLDING table (fast-lookup cache)
+          example: 1000000.00
+        ledgerBalance:
+          type: number
+          description: Balance computed from SECURITY_MOVEMENT entries (source of truth)
+          example: 900000.00
+        difference:
+          type: number
+          description: cachedBalance minus ledgerBalance
+          example: 100000.00
 
     ErrorResponse:
       type: object

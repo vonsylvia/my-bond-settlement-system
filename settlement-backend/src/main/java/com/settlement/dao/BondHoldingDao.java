@@ -2,6 +2,7 @@ package com.settlement.dao;
 
 import com.settlement.entity.BondHolding;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.TypedQuery;
 import org.springframework.stereotype.Repository;
@@ -31,7 +32,23 @@ public class BondHoldingDao {
         query.setParameter("accountId", accountId);
         query.setParameter("isin", isin);
         List<BondHolding> results = query.getResultList();
-        return results.isEmpty() ? Optional.empty() : Optional.of(results.get(0));
+        return results.isEmpty() ? Optional.empty() : Optional.of(results.getFirst());
+    }
+
+    /**
+     * Same as {@link #findByAccountAndIsin} but acquires a pessimistic write lock
+     * (SELECT ... FOR UPDATE) to serialise concurrent position updates.
+     */
+    public Optional<BondHolding> findByAccountAndIsinForUpdate(String accountId, String isin) {
+        TypedQuery<BondHolding> query = entityManager.createQuery(
+            "SELECT h FROM BondHolding h WHERE h.accountId = :accountId AND h.isin = :isin",
+            BondHolding.class
+        );
+        query.setParameter("accountId", accountId);
+        query.setParameter("isin", isin);
+        query.setLockMode(LockModeType.PESSIMISTIC_WRITE);
+        List<BondHolding> results = query.getResultList();
+        return results.isEmpty() ? Optional.empty() : Optional.of(results.getFirst());
     }
 
     public List<BondHolding> findByAccount(String accountId) {

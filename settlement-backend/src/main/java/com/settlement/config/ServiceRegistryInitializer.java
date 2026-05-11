@@ -2,7 +2,6 @@ package com.settlement.config;
 
 import com.settlement.bridge.ReconciliationHandler;
 import com.settlement.bridge.ServiceRegistry;
-import com.settlement.reconcile.ReconciliationService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -15,15 +14,17 @@ import org.springframework.stereotype.Component;
  *
  * <p>Services are registered under their shared interface types (defined in
  * settlement-common) so the EJB module can invoke them without reflection.
+ * Injecting the interface (not the concrete class) avoids JDK proxy type
+ * mismatch when Spring AOP creates transactional proxies.
  */
 @Component
 public class ServiceRegistryInitializer {
 
     private static final Logger log = LoggerFactory.getLogger(ServiceRegistryInitializer.class);
 
-    private final ReconciliationService reconciliationService;
+    private final ReconciliationHandler reconciliationService;
 
-    public ServiceRegistryInitializer(ReconciliationService reconciliationService) {
+    public ServiceRegistryInitializer(ReconciliationHandler reconciliationService) {
         this.reconciliationService = reconciliationService;
     }
 

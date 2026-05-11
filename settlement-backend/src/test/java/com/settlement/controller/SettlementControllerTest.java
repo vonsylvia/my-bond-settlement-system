@@ -9,6 +9,9 @@ import com.settlement.entity.SettlementInstruction;
 import com.settlement.exception.BusinessException;
 import com.settlement.exception.GlobalExceptionHandler;
 import com.settlement.exception.ResourceNotFoundException;
+import com.settlement.dto.PositionDiscrepancy;
+import com.settlement.dto.ReconciliationResult;
+import com.settlement.reconcile.PositionReconciliationService;
 import com.settlement.service.SettlementService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,6 +40,9 @@ class SettlementControllerTest {
 
     @Mock
     private SettlementService settlementService;
+
+    @Mock
+    private PositionReconciliationService positionReconciliationService;
 
     @InjectMocks
     private SettlementController controller;
@@ -214,6 +220,52 @@ class SettlementControllerTest {
         SettlementInstruction instruction = createPendingInstruction();
         instruction.setStatus(InstructionStatus.SENT);
         return instruction;
+    }
+
+    @Test
+    void reconcilePositions_shouldReturn200_whenConsistent() throws Exception {
+        when(positionReconciliationService.reconcile())
+                .thenReturn(new ReconciliationResult(
+                        com.settlement.entity.SnapshotType.INCREMENTAL, 5, List.of()));
+
+        mockMvc.perform(post("/api/positions/reconcile"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.consistent").value(true))
+                .andExpect(jsonPath("$.totalPositions").value(5))
+                .andExpect(jsonPath("$.discrepancyCount").value(0))
+                .andExpect(jsonPath("$.type").value("INCREMENTAL"))
+                .andExpect(jsonPath("$.discrepancies").isEmpty());
+    }
+
+    @Test
+    void reconcilePositions_shouldReturn200_withDiscrepancies() throws Exception {
+        List<PositionDiscrepancy> discrepancies = List.of(
+                new PositionDiscrepancy("ACC-001", "US0378331005",
+                        new BigDecimal("1000000.00"), new BigDecimal("900000.00"))
+        );
+        when(positionReconciliationService.reconcile())
+                .thenReturn(new ReconciliationResult(
+                        com.settlement.entity.SnapshotType.INCREMENTAL, 5, discrepancies));
+
+        mockMvc.perform(post("/api/positions/reconcile"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.consistent").value(false))
+                .andExpect(jsonPath("$.discrepancyCount").value(1))
+                .andExpect(jsonPath("$.discrepancies[0].accountId").value("ACC-001"))
+                .andExpect(jsonPath("$.discrepancies[0].difference").value(100000.00));
+    }
+
+    @Test
+    void dailyClose_shouldReturn200_withSnapshot() throws Exception {
+        when(positionReconciliationService.dailyClose())
+                .thenReturn(new ReconciliationResult(
+                        com.settlement.entity.SnapshotType.DAILY_CLOSE, 10, List.of()));
+
+        mockMvc.perform(post("/api/positions/daily-close"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.consistent").value(true))
+                .andExpect(jsonPath("$.totalPositions").value(10))
+                .andExpect(jsonPath("$.type").value("DAILY_CLOSE"));
     }
 
     private SettlementInstruction createFailedInstruction() {

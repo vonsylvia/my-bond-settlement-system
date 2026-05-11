@@ -9,6 +9,7 @@ import com.settlement.bridge.ReconciliationHandler;
 import com.settlement.swift.SwiftConst;
 import com.settlement.dao.AuditLogDao;
 import com.settlement.dao.BondHoldingDao;
+import com.settlement.dao.SecurityMovementDao;
 import com.settlement.dao.SettlementInstructionDao;
 import com.settlement.entity.*;
 import com.settlement.service.AlertWebhookService;
@@ -33,17 +34,20 @@ public class ReconciliationService implements ReconciliationHandler {
 
     private final SettlementInstructionDao instructionDao;
     private final BondHoldingDao holdingDao;
+    private final SecurityMovementDao movementDao;
     private final AuditLogDao auditLogDao;
     private final ReconciliationMetrics metrics;
     private final AlertWebhookService alertService;
 
     public ReconciliationService(SettlementInstructionDao instructionDao,
                                  BondHoldingDao holdingDao,
+                                 SecurityMovementDao movementDao,
                                  AuditLogDao auditLogDao,
                                  ReconciliationMetrics metrics,
                                  AlertWebhookService alertService) {
         this.instructionDao = instructionDao;
         this.holdingDao = holdingDao;
+        this.movementDao = movementDao;
         this.auditLogDao = auditLogDao;
         this.metrics = metrics;
         this.alertService = alertService;
@@ -118,37 +122,85 @@ public class ReconciliationService implements ReconciliationHandler {
         alertService.sendUnknownStatusAlert(instruction.getTradeRef(), instruction.getIsin());
     }
 
+    /**
+     * Records an immutable ledger entry (SecurityMovement) and updates the
+     * cached balance (BondHolding) atomically within the current transaction.
+     * Uses pessimistic locking on BondHolding to serialise concurrent updates
+     * to the same (account, isin) pair.
+     */
     private void updateHoldings(SettlementInstruction instruction) {
         String accountId = instruction.getAccountId();
         String isin = instruction.getIsin();
         BigDecimal quantity = instruction.getQuantity();
+        String tradeRef = instruction.getTradeRef();
 
-        Optional<BondHolding> optHolding = holdingDao.findByAccountAndIsin(accountId, isin);
+        MovementType movementType = (instruction.getDirection() == Direction.BUY)
+                ? MovementType.CREDIT
+                : MovementType.DEBIT;
+
+        // Lock the cached balance row (or discover it doesn't exist yet)
+        Optional<BondHolding> optHolding = holdingDao.findByAccountAndIsinForUpdate(accountId, isin);
 
         BondHolding holding;
-        if (optHolding.isPresent()) {
-            holding = optHolding.get();
-        } else {
-            holding = new BondHolding();
-            holding.setAccountId(accountId);
-            holding.setIsin(isin);
-            holding.setQuantity(BigDecimal.ZERO);
-        }
+        BigDecimal newBalance;
 
-        if (instruction.getDirection() == Direction.BUY) {
-            holding.setQuantity(holding.getQuantity().add(quantity));
+        if (movementType == MovementType.CREDIT) {
+            holding = optHolding.orElseGet(() -> newHolding(accountId, isin));
+            newBalance = holding.getQuantity().add(quantity);
         } else {
-            BigDecimal newQty = holding.getQuantity().subtract(quantity);
-            if (newQty.compareTo(BigDecimal.ZERO) < 0) {
+            holding = optHolding.orElseThrow(() -> {
+                log.error("No holding record for SELL: account={}, isin={}", accountId, isin);
+                return new IllegalStateException(
+                        "Cannot sell: no existing holding for account=" + accountId + ", isin=" + isin);
+            });
+            newBalance = holding.getQuantity().subtract(quantity);
+            if (newBalance.compareTo(BigDecimal.ZERO) < 0) {
                 log.error("Insufficient holdings for SELL: account={}, isin={}, current={}, requested={}",
                         accountId, isin, holding.getQuantity(), quantity);
                 throw new IllegalStateException("Insufficient bond holdings for settlement");
             }
-            holding.setQuantity(newQty);
         }
 
+        // 1) Append immutable ledger entry (source of truth)
+        movementDao.save(new SecurityMovement(
+                accountId, isin, movementType, quantity, newBalance, tradeRef));
+
+        // 2) Update cached balance for fast position queries
+        holding.setQuantity(newBalance);
         holdingDao.save(holding);
-        log.info("Holdings updated: account={}, isin={}, newQty={}", accountId, isin, holding.getQuantity());
+
+        // 3) In-transaction assertion: verify ledger and cache agree before commit
+        verifyBalanceConsistency(accountId, isin, newBalance);
+
+        log.info("Holdings updated: account={}, isin={}, type={}, qty={}, newBalance={}",
+                accountId, isin, movementType, quantity, newBalance);
+    }
+
+    /**
+     * Verifies that the ledger-computed balance matches the cached balance
+     * within the same transaction, before commit. Any mismatch triggers a
+     * rollback via unchecked exception — this should never happen in normal
+     * operation and indicates a serious data integrity issue.
+     */
+    private void verifyBalanceConsistency(String accountId, String isin, BigDecimal expectedBalance) {
+        BigDecimal ledgerBalance = movementDao.computeBalance(accountId, isin);
+        if (ledgerBalance.compareTo(expectedBalance) != 0) {
+            log.error("CRITICAL: Balance mismatch detected in transaction! " +
+                            "account={}, isin={}, expected={}, ledger={}",
+                    accountId, isin, expectedBalance, ledgerBalance);
+            throw new IllegalStateException(
+                    "Balance consistency check failed: cached=" + expectedBalance +
+                    " but ledger=" + ledgerBalance +
+                    " for account=" + accountId + ", isin=" + isin);
+        }
+    }
+
+    private static BondHolding newHolding(String accountId, String isin) {
+        BondHolding h = new BondHolding();
+        h.setAccountId(accountId);
+        h.setIsin(isin);
+        h.setQuantity(BigDecimal.ZERO);
+        return h;
     }
 
     /**
