@@ -25,16 +25,12 @@ public final class ServiceRegistry {
     private ServiceRegistry() {}
 
     /**
-     * Registers a service instance under its interface type.
-     *
-     * @throws IllegalStateException if a service is already registered for the type
+     * Registers (or replaces) a service instance under its interface type.
+     * Replacement is intentional: on Liberty app restart, the static registry
+     * in the shared EAR lib survives across WAR reloads.
      */
     public static <T> void register(Class<T> type, T service) {
-        Object prev = SERVICES.putIfAbsent(type, service);
-        if (prev != null) {
-            throw new IllegalStateException(
-                    "Service already registered for type: " + type.getName());
-        }
+        SERVICES.put(type, service);
     }
 
     /**

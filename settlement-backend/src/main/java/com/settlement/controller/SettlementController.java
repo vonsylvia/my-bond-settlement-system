@@ -2,6 +2,7 @@ package com.settlement.controller;
 
 import com.settlement.dto.*;
 import com.settlement.entity.SettlementInstruction;
+import com.settlement.reconcile.PositionReconciliationService;
 import com.settlement.service.SettlementService;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
@@ -15,9 +16,12 @@ import java.util.List;
 public class SettlementController {
 
     private final SettlementService settlementService;
+    private final PositionReconciliationService positionReconciliationService;
 
-    public SettlementController(SettlementService settlementService) {
+    public SettlementController(SettlementService settlementService,
+                                PositionReconciliationService positionReconciliationService) {
         this.settlementService = settlementService;
+        this.positionReconciliationService = positionReconciliationService;
     }
 
     @PostMapping("/settlement")
@@ -55,6 +59,18 @@ public class SettlementController {
             @RequestParam(required = false) String accountId) {
         List<HoldingResponse> holdings = settlementService.getHoldings(accountId);
         return ResponseEntity.ok(holdings);
+    }
+
+    @PostMapping("/positions/reconcile")
+    public ResponseEntity<ReconciliationResult> reconcilePositions() {
+        ReconciliationResult result = positionReconciliationService.reconcile();
+        return ResponseEntity.ok(result);
+    }
+
+    @PostMapping("/positions/daily-close")
+    public ResponseEntity<ReconciliationResult> dailyClose() {
+        ReconciliationResult result = positionReconciliationService.dailyClose();
+        return ResponseEntity.ok(result);
     }
 
     private SettlementResponse toResponse(SettlementInstruction instruction) {

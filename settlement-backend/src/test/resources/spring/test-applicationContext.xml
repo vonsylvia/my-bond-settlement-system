@@ -19,7 +19,7 @@
     <context:component-scan base-package="com.settlement">
         <context:exclude-filter type="annotation"
                                 expression="org.springframework.stereotype.Controller"/>
-        <!-- Exclude scheduler to avoid background tasks in tests -->
+        <!-- Exclude schedulers to avoid background tasks in tests -->
         <context:exclude-filter type="assignable"
                                 expression="com.settlement.service.SettlementRetryScheduler"/>
         <!-- Exclude MQ config (JNDI not available in test) -->

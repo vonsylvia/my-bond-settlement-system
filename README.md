@@ -83,7 +83,8 @@ sequenceDiagram
         REC->>DB: Find instruction by tradeRef
         alt Status = MATCHED
             REC->>DB: Update status → MATCHED
-            REC->>DB: Update bond holdings (BUY: +qty / SELL: -qty)
+            REC->>DB: Append SecurityMovement ledger entry (CREDIT/DEBIT)
+            REC->>DB: Update cached BondHolding balance
             REC->>DB: Audit log: SETTLEMENT_MATCHED
         else Status = FAILED
             REC->>DB: Update status → FAILED
@@ -197,8 +198,10 @@ Wait for Oracle to be healthy, then run the DDL:
 
 ```bash
 docker exec -i settlement-oracle bash -c \
-  "sqlplus settlement/settlement123@//localhost:1521/XEPDB1" < db/V1__create_schema.sql
+  "sqlplus settlement/settlement123@//localhost:1521/XEPDB1" < db/schema.sql
 ```
+
+> **Note:** When using Docker Compose, the `db/` directory is mounted to `/docker-entrypoint-initdb.d` so the schema is automatically applied on first container startup.
 
 ### 5. Verify deployment
 
@@ -275,6 +278,18 @@ docker exec -it settlement-oracle sqlplus settlement/settlement123@//localhost:1
 SELECT TRADE_REF, STATUS, ISIN FROM SETTLEMENT_INSTRUCTION ORDER BY CREATED_AT DESC;
 SELECT * FROM BOND_HOLDING;
 SELECT TRADE_REF, EVENT_TYPE, DETAIL FROM AUDIT_LOG ORDER BY CREATED_AT DESC;
+
+-- Position ledger: recent movements
+SELECT ACCOUNT_ID, ISIN, MOVEMENT_TYPE, QUANTITY, BALANCE_AFTER, TRADE_REF, CREATED_AT
+FROM SECURITY_MOVEMENT ORDER BY CREATED_AT DESC FETCH FIRST 20 ROWS ONLY;
+
+-- Verify ledger balance matches cached balance
+SELECT m.ACCOUNT_ID, m.ISIN,
+       SUM(CASE WHEN m.MOVEMENT_TYPE = 'CREDIT' THEN m.QUANTITY ELSE -m.QUANTITY END) AS LEDGER_BAL,
+       h.QUANTITY AS CACHED_BAL
+FROM SECURITY_MOVEMENT m
+LEFT JOIN BOND_HOLDING h ON m.ACCOUNT_ID = h.ACCOUNT_ID AND m.ISIN = h.ISIN
+GROUP BY m.ACCOUNT_ID, m.ISIN, h.QUANTITY;
 ```
 
 ## Modules
@@ -294,7 +309,7 @@ my-bond-settlement-system/
 ├── pom.xml                          # Parent POM (dependency management)
 ├── docker-compose.yml               # Local dev environment
 ├── db/
-│   └── V1__create_schema.sql        # Oracle DDL
+│   └── schema.sql                   # Oracle DDL (all tables + constraints + indexes)
 ├── docker/
 │   ├── liberty/
 │   │   ├── server.xml               # Liberty config (MQ RA, JMS, activation spec)
@@ -313,7 +328,9 @@ my-bond-settlement-system/
 │       │   └── MqConnectivityController.java # MQ health & MDB test endpoints
 │       ├── service/                         # Business logic
 │       ├── jms/SwiftMessageSender.java      # JMS sender (MT541)
-│       ├── reconcile/ReconciliationService.java # MT548 processing & reconciliation
+│       ├── reconcile/
+│       │   ├── ReconciliationService.java       # MT548 processing & position updates
+│       │   └── PositionReconciliationService.java # Incremental & daily-close reconciliation
 │       ├── dao/                             # Data access (JPA)
 │       ├── entity/                          # JPA entities
 │       └── dto/                             # Request/Response DTOs
@@ -328,6 +345,79 @@ my-bond-settlement-system/
 ├── settlement-frontend/             # Vue.js 3 frontend
 └── docs/
     └── openapi.yaml                 # API specification
+```
+
+## Position Management (Double-Entry Ledger)
+
+Bond positions are tracked using a **double-entry ledger** model with a cached balance layer:
+
+| Table | Role | Mutability |
+|-------|------|------------|
+| `SECURITY_MOVEMENT` | Immutable ledger — source of truth | Append-only (INSERT) |
+| `BOND_HOLDING` | Cached position balance — fast queries | Updated atomically with each movement |
+
+### How It Works
+
+When a settlement is confirmed (MT548 MATCHED), the system performs two writes in a single transaction:
+
+1. **Append a `SecurityMovement`** — an immutable ledger entry recording the CREDIT (BUY) or DEBIT (SELL), the quantity, and the resulting balance (`balanceAfter`)
+2. **Update `BondHolding`** — the cached balance for the `(account, isin)` pair, protected by a pessimistic lock (`SELECT FOR UPDATE`) to serialise concurrent updates
+
+```
+BUY  → SecurityMovement(CREDIT, qty=1000, balanceAfter=2500) + BondHolding(qty=2500)
+SELL → SecurityMovement(DEBIT,  qty=500,  balanceAfter=2000) + BondHolding(qty=2000)
+```
+
+### Concurrency Safety
+
+| Layer | Mechanism | Purpose |
+|-------|-----------|---------|
+| Application | `@Transactional` | Atomic read-check-write |
+| Application | `SELECT ... FOR UPDATE` on `BOND_HOLDING` | Serialise concurrent updates to same (account, isin) |
+| Database | `UNIQUE(ACCOUNT_ID, ISIN)` on `BOND_HOLDING` | Prevent duplicate cache rows |
+| Database | `CHECK (QUANTITY >= 0)` on `BOND_HOLDING` | Prevent negative balances |
+| Database | `CHECK (BALANCE_AFTER >= 0)` on `SECURITY_MOVEMENT` | Guarantee ledger consistency |
+
+### Position Reconciliation
+
+Reconciliation uses a **three-tier** verification model:
+
+| Tier | Trigger | Scope | Action on mismatch |
+|------|---------|-------|--------------------|
+| **P0: Transaction assertion** | Every `updateHoldings()` | Single position | Transaction rollback (immediate) |
+| **P1: Incremental recon** | On-demand API call | Positions changed since last snapshot | Log ERROR + return discrepancies |
+| **P2: Daily close snapshot** | End-of-day API call | All positions (full scan) | Log ERROR + persist snapshot + return discrepancies |
+
+**P0** runs inside every position update transaction (`verifyBalanceConsistency`), comparing the ledger aggregate with the cached balance before commit. Any mismatch causes an immediate rollback — this guarantees that no inconsistency can be introduced via the normal code path.
+
+**P1** (incremental) via `POST /api/positions/reconcile`:
+- Finds the latest `RECONCILIATION_SNAPSHOT` timestamp as the baseline
+- Queries `SECURITY_MOVEMENT` for distinct `(account, isin)` pairs with movements after that timestamp
+- For each, compares `computeBalance()` against `BondHolding` — only changed positions are checked
+- If no snapshot exists, falls back to a full scan
+
+**P2** (daily close) via `POST /api/positions/daily-close`:
+- Full scan of all positions (same as the old scheduler, but on-demand)
+- Persists a `RECONCILIATION_SNAPSHOT` record as the new baseline for P1
+- Typically triggered by an external job scheduler (cron, Autosys, etc.) at COB
+
+```json
+{
+  "reconciledAt": "2026-05-11T22:08:00",
+  "type": "INCREMENTAL",
+  "totalPositions": 3,
+  "discrepancyCount": 1,
+  "consistent": false,
+  "discrepancies": [
+    {
+      "accountId": "ACC-001",
+      "isin": "US0378331005",
+      "cachedBalance": 1000000.00,
+      "ledgerBalance": 900000.00,
+      "difference": 100000.00
+    }
+  ]
+}
 ```
 
 ## Messaging Architecture
@@ -450,11 +540,13 @@ SENT    → (status unchanged)               (MT548 unparseable → UNKNOWN, nee
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/holdings` | List all bond holdings |
+| `GET` | `/api/holdings` | List all bond holdings (cached balances) |
 | `GET` | `/api/holdings/{accountId}` | Get holdings for account |
 | `POST` | `/api/settlement` | Submit settlement instruction (returns 202, async processing) |
 | `GET` | `/api/settlement/{tradeRef}` | Get instruction status (includes `retryCount`, `failureReason`) |
 | `POST` | `/api/settlement/{tradeRef}/retry` | Manual retry for FAILED instructions |
+| `POST` | `/api/positions/reconcile` | Incremental reconciliation (only changed positions since last snapshot) |
+| `POST` | `/api/positions/daily-close` | Daily close: full reconciliation + persist snapshot as new baseline |
 | `GET` | `/api/mq/health` | IBM MQ connection health check |
 | `POST` | `/api/mq/test-mdb` | Send test MT548 to verify MDB processing |
 | `GET` | `/api/mq/stats` | MDB + reconciliation metrics + live queue depth/consumer status |
