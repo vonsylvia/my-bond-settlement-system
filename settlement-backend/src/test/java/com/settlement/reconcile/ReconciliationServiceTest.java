@@ -162,6 +162,22 @@ class ReconciliationServiceTest {
     }
 
     @Test
+    void processSwiftReply_shouldFailImmediately_whenSellingWithNoHolding() {
+        sampleInstruction.setDirection(Direction.SELL);
+        sampleInstruction.setQuantity(new BigDecimal("100000.00"));
+
+        when(instructionDao.findByTradeRef("TR-TEST123456")).thenReturn(Optional.of(sampleInstruction));
+        when(holdingDao.findByAccountAndIsin("ACC-001", "US0378331005")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Cannot sell")
+                .hasMessageContaining("no existing holding");
+
+        verify(holdingDao, never()).save(any());
+    }
+
+    @Test
     void processSwiftReply_shouldMarkFailed_onRejectStatus() {
         when(instructionDao.findByTradeRef("TR-TEST123456")).thenReturn(Optional.of(sampleInstruction));
         when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));

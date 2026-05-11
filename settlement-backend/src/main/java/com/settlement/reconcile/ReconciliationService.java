@@ -126,18 +126,15 @@ public class ReconciliationService implements ReconciliationHandler {
         Optional<BondHolding> optHolding = holdingDao.findByAccountAndIsin(accountId, isin);
 
         BondHolding holding;
-        if (optHolding.isPresent()) {
-            holding = optHolding.get();
-        } else {
-            holding = new BondHolding();
-            holding.setAccountId(accountId);
-            holding.setIsin(isin);
-            holding.setQuantity(BigDecimal.ZERO);
-        }
-
         if (instruction.getDirection() == Direction.BUY) {
+            holding = optHolding.orElseGet(() -> newHolding(accountId, isin));
             holding.setQuantity(holding.getQuantity().add(quantity));
         } else {
+            holding = optHolding.orElseThrow(() -> {
+                log.error("No holding record for SELL: account={}, isin={}", accountId, isin);
+                return new IllegalStateException(
+                        "Cannot sell: no existing holding for account=" + accountId + ", isin=" + isin);
+            });
             BigDecimal newQty = holding.getQuantity().subtract(quantity);
             if (newQty.compareTo(BigDecimal.ZERO) < 0) {
                 log.error("Insufficient holdings for SELL: account={}, isin={}, current={}, requested={}",
@@ -149,6 +146,14 @@ public class ReconciliationService implements ReconciliationHandler {
 
         holdingDao.save(holding);
         log.info("Holdings updated: account={}, isin={}, newQty={}", accountId, isin, holding.getQuantity());
+    }
+
+    private static BondHolding newHolding(String accountId, String isin) {
+        BondHolding h = new BondHolding();
+        h.setAccountId(accountId);
+        h.setIsin(isin);
+        h.setQuantity(BigDecimal.ZERO);
+        return h;
     }
 
     /**

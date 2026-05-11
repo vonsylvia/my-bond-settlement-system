@@ -31,7 +31,7 @@ public class BondHoldingDao {
         query.setParameter("accountId", accountId);
         query.setParameter("isin", isin);
         List<BondHolding> results = query.getResultList();
-        return results.isEmpty() ? Optional.empty() : Optional.of(results.get(0));
+        return results.isEmpty() ? Optional.empty() : Optional.of(results.getFirst());
     }
 
     public List<BondHolding> findByAccount(String accountId) {
