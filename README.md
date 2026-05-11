@@ -83,8 +83,8 @@ sequenceDiagram
         REC->>DB: Find instruction by tradeRef
         alt Status = MATCHED
             REC->>DB: Update status → MATCHED
-            REC->>DB: Append SecurityMovement ledger entry (CREDIT/DEBIT)
-            REC->>DB: Update cached BondHolding balance
+            REC->>DB: Update BondHolding position (authoritative)
+            REC->>DB: Append SecurityMovement audit entry (CREDIT/DEBIT)
             REC->>DB: Audit log: SETTLEMENT_MATCHED
         else Status = FAILED
             REC->>DB: Update status → FAILED
@@ -279,17 +279,28 @@ SELECT TRADE_REF, STATUS, ISIN FROM SETTLEMENT_INSTRUCTION ORDER BY CREATED_AT D
 SELECT * FROM BOND_HOLDING;
 SELECT TRADE_REF, EVENT_TYPE, DETAIL FROM AUDIT_LOG ORDER BY CREATED_AT DESC;
 
--- Position ledger: recent movements
+-- Position journal: recent movements
 SELECT ACCOUNT_ID, ISIN, MOVEMENT_TYPE, QUANTITY, BALANCE_AFTER, TRADE_REF, CREATED_AT
 FROM SECURITY_MOVEMENT ORDER BY CREATED_AT DESC FETCH FIRST 20 ROWS ONLY;
 
--- Verify ledger balance matches cached balance
-SELECT m.ACCOUNT_ID, m.ISIN,
-       SUM(CASE WHEN m.MOVEMENT_TYPE = 'CREDIT' THEN m.QUANTITY ELSE -m.QUANTITY END) AS LEDGER_BAL,
-       h.QUANTITY AS CACHED_BAL
-FROM SECURITY_MOVEMENT m
-LEFT JOIN BOND_HOLDING h ON m.ACCOUNT_ID = h.ACCOUNT_ID AND m.ISIN = h.ISIN
-GROUP BY m.ACCOUNT_ID, m.ISIN, h.QUANTITY;
+-- EOD snapshots (reconciliation baseline)
+SELECT BUSINESS_DATE, ACCOUNT_ID, ISIN, BALANCE FROM EOD_POSITION_SNAPSHOT
+ORDER BY BUSINESS_DATE DESC, ACCOUNT_ID, ISIN FETCH FIRST 20 ROWS ONLY;
+
+-- Reconciliation: verify position == EOD snapshot + today's movements
+SELECT h.ACCOUNT_ID, h.ISIN,
+       h.QUANTITY AS POSITION,
+       NVL(e.BALANCE, 0) AS EOD_BALANCE,
+       NVL(SUM(CASE WHEN m.MOVEMENT_TYPE = 'CREDIT' THEN m.QUANTITY ELSE -m.QUANTITY END), 0) AS NET_MOVEMENT,
+       NVL(e.BALANCE, 0) + NVL(SUM(CASE WHEN m.MOVEMENT_TYPE = 'CREDIT' THEN m.QUANTITY ELSE -m.QUANTITY END), 0) AS EXPECTED
+FROM BOND_HOLDING h
+LEFT JOIN EOD_POSITION_SNAPSHOT e
+  ON h.ACCOUNT_ID = e.ACCOUNT_ID AND h.ISIN = e.ISIN
+  AND e.BUSINESS_DATE = (SELECT MAX(BUSINESS_DATE) FROM EOD_POSITION_SNAPSHOT)
+LEFT JOIN SECURITY_MOVEMENT m
+  ON h.ACCOUNT_ID = m.ACCOUNT_ID AND h.ISIN = m.ISIN
+  AND m.CREATED_AT > (SELECT MAX(BUSINESS_DATE) + 1 FROM EOD_POSITION_SNAPSHOT)
+GROUP BY h.ACCOUNT_ID, h.ISIN, h.QUANTITY, e.BALANCE;
 ```
 
 ## Modules
@@ -347,26 +358,29 @@ my-bond-settlement-system/
     └── openapi.yaml                 # API specification
 ```
 
-## Position Management (Double-Entry Ledger)
+## Position Management (CSD-Style)
 
-Bond positions are tracked using a **double-entry ledger** model with a cached balance layer:
+Bond positions follow the architecture used by large Central Securities Depositories (CSDs like Euroclear, Clearstream, DTCC):
 
 | Table | Role | Mutability |
 |-------|------|------------|
-| `SECURITY_MOVEMENT` | Immutable ledger — source of truth | Append-only (INSERT) |
-| `BOND_HOLDING` | Cached position balance — fast queries | Updated atomically with each movement |
+| `BOND_HOLDING` | **Authoritative position** — the source of truth for current balances | Updated transactionally on each settlement |
+| `SECURITY_MOVEMENT` | Immutable audit journal — records every position change | Append-only (INSERT) |
+| `EOD_POSITION_SNAPSHOT` | End-of-day per-position snapshot — reconciliation baseline | Inserted once per business day |
 
 ### How It Works
 
 When a settlement is confirmed (MT548 MATCHED), the system performs two writes in a single transaction:
 
-1. **Append a `SecurityMovement`** — an immutable ledger entry recording the CREDIT (BUY) or DEBIT (SELL), the quantity, and the resulting balance (`balanceAfter`)
-2. **Update `BondHolding`** — the cached balance for the `(account, isin)` pair, protected by a pessimistic lock (`SELECT FOR UPDATE`) to serialise concurrent updates
+1. **Update `BondHolding`** — the authoritative position for the `(account, isin)` pair, protected by a pessimistic lock (`SELECT FOR UPDATE`) to serialise concurrent updates
+2. **Append a `SecurityMovement`** — an immutable audit entry recording the CREDIT (BUY) or DEBIT (SELL), the quantity, and the resulting balance (`balanceAfter`)
 
 ```
-BUY  → SecurityMovement(CREDIT, qty=1000, balanceAfter=2500) + BondHolding(qty=2500)
-SELL → SecurityMovement(DEBIT,  qty=500,  balanceAfter=2000) + BondHolding(qty=2000)
+BUY  → BondHolding(qty=2500) + SecurityMovement(CREDIT, qty=1000, balanceAfter=2500)
+SELL → BondHolding(qty=2000) + SecurityMovement(DEBIT,  qty=500,  balanceAfter=2000)
 ```
+
+Consistency between Position and Movement is guaranteed by the transaction boundary — no post-hoc SUM verification on the hot path. Drift detection is handled asynchronously by reconciliation.
 
 ### Concurrency Safety
 
@@ -374,32 +388,48 @@ SELL → SecurityMovement(DEBIT,  qty=500,  balanceAfter=2000) + BondHolding(qty
 |-------|-----------|---------|
 | Application | `@Transactional` | Atomic read-check-write |
 | Application | `SELECT ... FOR UPDATE` on `BOND_HOLDING` | Serialise concurrent updates to same (account, isin) |
-| Database | `UNIQUE(ACCOUNT_ID, ISIN)` on `BOND_HOLDING` | Prevent duplicate cache rows |
+| Database | `UNIQUE(ACCOUNT_ID, ISIN)` on `BOND_HOLDING` | Prevent duplicate position rows |
 | Database | `CHECK (QUANTITY >= 0)` on `BOND_HOLDING` | Prevent negative balances |
-| Database | `CHECK (BALANCE_AFTER >= 0)` on `SECURITY_MOVEMENT` | Guarantee ledger consistency |
+| Database | `CHECK (BALANCE_AFTER >= 0)` on `SECURITY_MOVEMENT` | Guarantee journal consistency |
 
-### Position Reconciliation
+### Position Reconciliation (Snapshot-Based)
 
-Reconciliation uses a **three-tier** verification model:
+Reconciliation follows the CSD industry pattern — verifying position integrity against bounded movement summation rather than scanning all historical data:
 
-| Tier | Trigger | Scope | Action on mismatch |
-|------|---------|-------|--------------------|
-| **P0: Transaction assertion** | Every `updateHoldings()` | Single position | Transaction rollback (immediate) |
-| **P1: Incremental recon** | On-demand API call | Positions changed since last snapshot | Log ERROR + return discrepancies |
-| **P2: Daily close snapshot** | End-of-day API call | All positions (full scan) | Log ERROR + persist snapshot + return discrepancies |
+```
+current_position == eod_snapshot(prev_day) + SUM(movements since snapshot)
+```
 
-**P0** runs inside every position update transaction (`verifyBalanceConsistency`), comparing the ledger aggregate with the cached balance before commit. Any mismatch causes an immediate rollback — this guarantees that no inconsistency can be introduced via the normal code path.
+| Mode | Trigger | Scope | SUM Range |
+|------|---------|-------|-----------|
+| **Incremental** | On-demand API call | Positions changed since last EOD | One day (bounded) |
+| **Daily close** | End-of-day API call | All positions | One day (bounded) |
+| **Bootstrap** | First-ever run (no snapshot exists) | All positions | All-time (one-time only) |
 
-**P1** (incremental) via `POST /api/positions/reconcile`:
-- Finds the latest `RECONCILIATION_SNAPSHOT` timestamp as the baseline
-- Queries `SECURITY_MOVEMENT` for distinct `(account, isin)` pairs with movements after that timestamp
-- For each, compares `computeBalance()` against `BondHolding` — only changed positions are checked
-- If no snapshot exists, falls back to a full scan
+**Incremental** via `POST /api/positions/reconcile`:
+- Finds the latest `EOD_POSITION_SNAPSHOT` business date as the baseline
+- Queries `SECURITY_MOVEMENT` for distinct `(account, isin)` pairs with movements after that date
+- For each changed position, verifies: `position == eod_balance + SUM(movements since EOD)`
+- SUM is always bounded to at most one day of data — **O(daily_volume)** not O(all_history)
+- If no EOD snapshot exists, falls back to bootstrap (one-time full scan)
 
-**P2** (daily close) via `POST /api/positions/daily-close`:
-- Full scan of all positions (same as the old scheduler, but on-demand)
-- Persists a `RECONCILIATION_SNAPSHOT` record as the new baseline for P1
+**Daily close** via `POST /api/positions/daily-close`:
+- Full verification of all positions against previous EOD snapshot + today's movements
+- Persists per-position `EOD_POSITION_SNAPSHOT` records as the new baseline
+- Also saves a `RECONCILIATION_SNAPSHOT` run record
 - Typically triggered by an external job scheduler (cron, Autosys, etc.) at COB
+- Idempotent: refuses to run if snapshots already exist for the business date
+
+**Data lifecycle:**
+
+```
+Day 1 close: Snap EOD positions → EOD_POSITION_SNAPSHOT (date=Day1)
+Day 2:       Settlements create movements (bounded to Day 2 only)
+Day 2 recon: position == EOD(Day1) + SUM(Day2 movements)  ← bounded query
+Day 2 close: Snap EOD positions → EOD_POSITION_SNAPSHOT (date=Day2)
+```
+
+**Response example:**
 
 ```json
 {

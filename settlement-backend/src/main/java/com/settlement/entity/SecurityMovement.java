@@ -5,10 +5,13 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * Immutable ledger entry representing a single position change.
+ * Immutable audit journal entry representing a single position change.
  * This table is append-only — rows are never updated or deleted.
- * The current position is the sum of all CREDIT entries minus all DEBIT entries
- * for a given (accountId, isin) pair.
+ *
+ * <p>The authoritative current position lives in {@code BondHolding}.
+ * This journal serves as the audit trail and is used by daily
+ * reconciliation to verify position integrity:
+ * {@code position == eod_snapshot + SUM(movements since snapshot)}.
  */
 @Entity
 @Table(name = "SECURITY_MOVEMENT", indexes = {

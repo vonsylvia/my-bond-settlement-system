@@ -93,7 +93,6 @@ class ReconciliationServiceTest {
         when(holdingDao.findByAccountAndIsinForUpdate("ACC-001", "US0378331005")).thenReturn(Optional.empty());
         when(holdingDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(movementDao.computeBalance("ACC-001", "US0378331005")).thenReturn(new BigDecimal("1000000.00"));
 
         reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED);
 
@@ -126,7 +125,6 @@ class ReconciliationServiceTest {
         when(holdingDao.findByAccountAndIsinForUpdate("ACC-001", "US0378331005")).thenReturn(Optional.of(existingHolding));
         when(holdingDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(movementDao.computeBalance("ACC-001", "US0378331005")).thenReturn(new BigDecimal("1500000.00"));
 
         reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED);
 
@@ -155,7 +153,6 @@ class ReconciliationServiceTest {
         when(holdingDao.findByAccountAndIsinForUpdate("ACC-001", "US0378331005")).thenReturn(Optional.of(existingHolding));
         when(holdingDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(movementDao.computeBalance("ACC-001", "US0378331005")).thenReturn(new BigDecimal("200000.00"));
 
         reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED);
 
@@ -288,7 +285,6 @@ class ReconciliationServiceTest {
         when(holdingDao.findByAccountAndIsinForUpdate("ACC-001", "US0378331005")).thenReturn(Optional.empty());
         when(holdingDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(movementDao.computeBalance("ACC-001", "US0378331005")).thenReturn(new BigDecimal("1000000.00"));
 
         reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED);
 

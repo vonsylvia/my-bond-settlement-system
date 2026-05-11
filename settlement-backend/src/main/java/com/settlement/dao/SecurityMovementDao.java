@@ -69,7 +69,8 @@ public class SecurityMovementDao {
     }
 
     /**
-     * Computes the true balance from ledger entries for a specific (account, isin) pair.
+     * Computes the balance from all ledger entries for a specific (account, isin) pair.
+     * Use sparingly — prefer {@link #computeBalanceSince} for bounded queries.
      */
     public BigDecimal computeBalance(String accountId, String isin) {
         Object result = entityManager.createQuery(
@@ -80,5 +81,38 @@ public class SecurityMovementDao {
          .setParameter("isin", isin)
          .getSingleResult();
         return result != null ? (BigDecimal) result : BigDecimal.ZERO;
+    }
+
+    /**
+     * Computes the net movement (credits minus debits) for a specific (account, isin)
+     * since a given timestamp. Used by reconciliation to verify:
+     * <pre>current_position = eod_snapshot_balance + computeBalanceSince(eod_cutoff)</pre>
+     */
+    public BigDecimal computeBalanceSince(String accountId, String isin, LocalDateTime since) {
+        Object result = entityManager.createQuery(
+            "SELECT SUM(CASE WHEN m.movementType = com.settlement.entity.MovementType.CREDIT " +
+            "THEN m.quantity ELSE -m.quantity END) " +
+            "FROM SecurityMovement m WHERE m.accountId = :accountId AND m.isin = :isin " +
+            "AND m.createdAt > :since"
+        ).setParameter("accountId", accountId)
+         .setParameter("isin", isin)
+         .setParameter("since", since)
+         .getSingleResult();
+        return result != null ? (BigDecimal) result : BigDecimal.ZERO;
+    }
+
+    /**
+     * Computes net movements for all (account, isin) pairs since a given timestamp.
+     * Returns rows of [accountId, isin, netMovement].
+     */
+    @SuppressWarnings("unchecked")
+    public List<Object[]> computeAllBalancesSince(LocalDateTime since) {
+        return entityManager.createQuery(
+            "SELECT m.accountId, m.isin, " +
+            "SUM(CASE WHEN m.movementType = com.settlement.entity.MovementType.CREDIT " +
+            "THEN m.quantity ELSE -m.quantity END) " +
+            "FROM SecurityMovement m WHERE m.createdAt > :since " +
+            "GROUP BY m.accountId, m.isin ORDER BY m.accountId, m.isin"
+        ).setParameter("since", since).getResultList();
     }
 }
