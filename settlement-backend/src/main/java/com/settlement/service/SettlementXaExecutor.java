@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -48,7 +49,8 @@ public class SettlementXaExecutor {
     }
 
     /**
-     * Single attempt: set SUBMITTING, send JMS, set SENT.
+     * Single attempt: atomically transition PENDING→SUBMITTING, send JMS, set SENT.
+     * Uses CAS-style status check to prevent duplicate sends from concurrent threads.
      * Runs in its own XA transaction (DB + MQ).
      * Throws on failure so the caller can decide to retry.
      */
@@ -68,6 +70,27 @@ public class SettlementXaExecutor {
             return;
         }
 
+        if (instruction.getStatus() == InstructionStatus.SUBMITTING) {
+            log.info("Instruction already in-flight, skipping: tradeRef={}", tradeRef);
+            return;
+        }
+
+        if (instruction.getStatus() != InstructionStatus.PENDING
+                && instruction.getStatus() != InstructionStatus.RETRYING) {
+            log.info("Instruction not in processable state, skipping: tradeRef={}, status={}",
+                    tradeRef, instruction.getStatus());
+            return;
+        }
+
+        int updated = instructionDao.compareAndSetStatus(
+                tradeRef, instruction.getStatus(), InstructionStatus.SUBMITTING);
+        if (updated == 0) {
+            log.info("CAS failed (concurrent processing detected), skipping: tradeRef={}", tradeRef);
+            return;
+        }
+
+        instruction.setStatus(InstructionStatus.SUBMITTING);
+
         SwiftMessageStrategy strategy = strategyFactory.getStrategy(instruction.getPreferredStandard());
         CanonicalSettlement canonical = canonicalMapper.toCanonical(instruction);
         String outboundType = strategy.getOutboundMessageType(canonical);
@@ -76,9 +99,6 @@ public class SettlementXaExecutor {
                 .findLatestOutbound(instruction.getId(), outboundType)
                 .orElseThrow(() -> new IllegalStateException(
                         "No outbound " + outboundType + " message found for tradeRef=" + tradeRef));
-
-        instruction.setStatus(InstructionStatus.SUBMITTING);
-        instructionDao.save(instruction);
 
         messageSender.sendSwiftMessage(tradeRef, outbound.getRawPayload(),
                 outboundType, instruction.getPreferredStandard());
@@ -101,7 +121,7 @@ public class SettlementXaExecutor {
                 ? errorMessage.substring(0, 1000)
                 : errorMessage;
 
-        int updated = instructionDao.updateFailure(tradeRef, attempt, reason);
+        int updated = instructionDao.updateFailure(tradeRef, attempt, reason, exhausted);
         if (updated == 0) {
             log.warn("recordFailure: instruction not found, skipping: tradeRef={}", tradeRef);
             return;
@@ -113,23 +133,35 @@ public class SettlementXaExecutor {
         auditLogDao.save(new AuditLog(tradeRef, eventType, detail));
     }
 
+    private static final long ORPHAN_THRESHOLD_MINUTES = 5;
+
     /**
-     * Crash-recovery: reset orphaned SUBMITTING instructions back to PENDING,
-     * then return all PENDING trade refs (including just-reset ones) for re-processing.
+     * Crash-recovery: reset SUBMITTING instructions that have been stuck longer
+     * than {@link #ORPHAN_THRESHOLD_MINUTES} back to PENDING, then return all
+     * PENDING and RETRYING trade refs for re-processing. The time threshold
+     * prevents resetting instructions that are still actively being sent.
      */
     @Transactional
     public List<String> recoverOrphanedInstructions() {
-        int resetCount = instructionDao.bulkUpdateStatus(InstructionStatus.SUBMITTING, InstructionStatus.PENDING);
+        LocalDateTime threshold = LocalDateTime.now().minusMinutes(ORPHAN_THRESHOLD_MINUTES);
+        int resetCount = instructionDao.bulkUpdateStatusOlderThan(
+                InstructionStatus.SUBMITTING, InstructionStatus.PENDING, threshold);
         if (resetCount > 0) {
-            log.warn("Recovered {} orphaned SUBMITTING instruction(s) to PENDING", resetCount);
+            log.warn("Recovered {} orphaned SUBMITTING instruction(s) (stuck > {}min) to PENDING",
+                    resetCount, ORPHAN_THRESHOLD_MINUTES);
         }
 
         List<SettlementInstruction> pending =
                 instructionDao.findByStatus(InstructionStatus.PENDING);
+        List<SettlementInstruction> retrying =
+                instructionDao.findByStatus(InstructionStatus.RETRYING);
 
-        List<String> tradeRefs = pending.stream().map(SettlementInstruction::getTradeRef).toList();
+        List<String> tradeRefs = new java.util.ArrayList<>(
+                pending.stream().map(SettlementInstruction::getTradeRef).toList());
+        tradeRefs.addAll(retrying.stream().map(SettlementInstruction::getTradeRef).toList());
+
         if (!tradeRefs.isEmpty()) {
-            log.warn("Re-queuing {} orphaned PENDING instruction(s): {}", tradeRefs.size(), tradeRefs);
+            log.info("Re-queuing {} orphaned instruction(s): {}", tradeRefs.size(), tradeRefs);
         }
 
         return tradeRefs;
