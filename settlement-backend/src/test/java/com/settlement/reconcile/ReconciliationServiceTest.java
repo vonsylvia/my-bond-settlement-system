@@ -209,7 +209,7 @@ class ReconciliationServiceTest {
     }
 
     @Test
-    void processSwiftReply_shouldFailOnInsufficientHoldings_forSell() {
+    void processSwiftReply_shouldMarkFailed_onInsufficientHoldings_forSell() {
         sampleInstruction.setDirection(Direction.SELL);
         sampleInstruction.setQuantity(new BigDecimal("600000.00"));
 
@@ -220,31 +220,33 @@ class ReconciliationServiceTest {
 
         when(instructionDao.findByTradeRef("TR-TEST123456")).thenReturn(Optional.of(sampleInstruction));
         when(holdingDao.findByAccountAndIsinForUpdate("ACC-001", "US0378331005")).thenReturn(Optional.of(existingHolding));
+        when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(swiftMessageDao.nextSequenceNo(anyLong(), anyString(), any())).thenReturn(1);
         when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThatThrownBy(() -> reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Insufficient");
+        reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED);
 
+        assertThat(sampleInstruction.getStatus()).isEqualTo(InstructionStatus.FAILED);
+        assertThat(sampleInstruction.getFailureReason()).contains("Insufficient");
         verify(movementDao, never()).save(any());
+        verify(holdingDao, never()).save(any());
     }
 
     @Test
-    void processSwiftReply_shouldFailImmediately_whenSellingWithNoHolding() {
+    void processSwiftReply_shouldMarkFailed_whenSellingWithNoHolding() {
         sampleInstruction.setDirection(Direction.SELL);
         sampleInstruction.setQuantity(new BigDecimal("100000.00"));
 
         when(instructionDao.findByTradeRef("TR-TEST123456")).thenReturn(Optional.of(sampleInstruction));
         when(holdingDao.findByAccountAndIsinForUpdate("ACC-001", "US0378331005")).thenReturn(Optional.empty());
+        when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(swiftMessageDao.nextSequenceNo(anyLong(), anyString(), any())).thenReturn(1);
         when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThatThrownBy(() -> reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Cannot sell")
-                .hasMessageContaining("no existing holding");
+        reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED);
 
+        assertThat(sampleInstruction.getStatus()).isEqualTo(InstructionStatus.FAILED);
+        assertThat(sampleInstruction.getFailureReason()).contains("no existing holding");
         verify(holdingDao, never()).save(any());
         verify(movementDao, never()).save(any());
     }
