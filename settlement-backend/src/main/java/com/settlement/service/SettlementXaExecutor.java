@@ -5,6 +5,7 @@ import com.settlement.dao.SettlementInstructionDao;
 import com.settlement.dao.SwiftMessageDao;
 import com.settlement.canonical.CanonicalSettlement;
 import com.settlement.entity.*;
+import com.settlement.exception.NonRetryableSettlementException;
 import com.settlement.jms.SwiftMessageSender;
 import com.settlement.strategy.CanonicalMapper;
 import com.settlement.strategy.SwiftMessageStrategy;
@@ -97,7 +98,7 @@ public class SettlementXaExecutor {
 
         SwiftMessage outbound = swiftMessageDao
                 .findLatestOutbound(instruction.getId(), outboundType)
-                .orElseThrow(() -> new IllegalStateException(
+                .orElseThrow(() -> new NonRetryableSettlementException(
                         "No outbound " + outboundType + " message found for tradeRef=" + tradeRef));
 
         messageSender.sendSwiftMessage(tradeRef, outbound.getRawPayload(),

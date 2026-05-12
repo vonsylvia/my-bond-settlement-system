@@ -63,7 +63,7 @@ sequenceDiagram
         ASYNC->>DB: Update status → SUBMITTING
         ASYNC->>MQ: JmsTemplate.send(SWIFT.SEND.QUEUE)
         ASYNC->>DB: Update status → SENT
-        Note over ASYNC: On failure: exponential backoff retry<br/>(2s → 4s → 8s, max 3 attempts)
+        Note over ASYNC: On failure: exponential backoff with jitter<br/>(~2s → ~4s → ~8s, max 3 attempts, non-blocking)
         alt Retry pending (not exhausted)
             ASYNC->>DB: Update status → RETRYING
         else All retries failed
@@ -632,9 +632,10 @@ Settlement submission follows a **two-phase async pattern** to minimize client l
 
 | Aspect | Detail |
 |--------|--------|
-| Strategy | Exponential backoff: 2s → 4s → 8s (max 30s) |
+| Strategy | Exponential backoff with full jitter: ~1-2s → ~2-4s → ~4-8s (cap 30s) |
 | Max attempts | 3 |
-| Retry trigger | Inline in the async thread (no DB polling needed) |
+| Non-retryable errors | `NonRetryableSettlementException` skips all retries, marks FAILED immediately |
+| Retry trigger | `ScheduledExecutorService` delay (non-blocking, threads return to pool during backoff) |
 | Intermediate state | `RETRYING` with `failureReason` and `retryCount` recorded (not yet exhausted) |
 | Final state | `FAILED` with `failureReason` and `retryCount` recorded (all retries exhausted) |
 | Webhook alert | Submitted to `alertExecutor` when all retries exhausted (configurable URL) |
