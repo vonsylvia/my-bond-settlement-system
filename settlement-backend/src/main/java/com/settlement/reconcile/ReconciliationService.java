@@ -100,6 +100,12 @@ public class ReconciliationService implements ReconciliationHandler {
     }
 
     private void handleMatched(SettlementInstruction instruction) {
+        if (instruction.getStatus() == InstructionStatus.MATCHED) {
+            log.warn("Duplicate MATCHED reply ignored (idempotent): tradeRef={}", instruction.getTradeRef());
+            metrics.recordMatched();
+            return;
+        }
+
         instruction.setStatus(InstructionStatus.MATCHED);
         updateHoldings(instruction);
         auditLogDao.save(new AuditLog(instruction.getTradeRef(), AuditEventType.SETTLEMENT_MATCHED,
