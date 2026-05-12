@@ -3,11 +3,16 @@ package com.settlement.service;
 import com.settlement.dao.AuditLogDao;
 import com.settlement.dao.BondHoldingDao;
 import com.settlement.dao.SettlementInstructionDao;
+import com.settlement.dao.SwiftMessageDao;
 import com.settlement.dto.HoldingResponse;
 import com.settlement.dto.SettlementRequest;
+import com.settlement.canonical.CanonicalSettlement;
 import com.settlement.entity.*;
 import com.settlement.exception.BusinessException;
 import com.settlement.exception.ResourceNotFoundException;
+import com.settlement.strategy.CanonicalMapper;
+import com.settlement.strategy.SwiftMessageStrategy;
+import com.settlement.strategy.SwiftMessageStrategyFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -26,29 +31,39 @@ public class SettlementService {
     private final SettlementInstructionDao instructionDao;
     private final BondHoldingDao holdingDao;
     private final AuditLogDao auditLogDao;
-    private final SwiftMessageBuilder messageBuilder;
+    private final SwiftMessageDao swiftMessageDao;
+    private final SwiftMessageStrategyFactory strategyFactory;
+    private final CanonicalMapper canonicalMapper;
     private final AsyncSettlementProcessor asyncProcessor;
 
     public SettlementService(SettlementInstructionDao instructionDao,
                              BondHoldingDao holdingDao,
                              AuditLogDao auditLogDao,
-                             SwiftMessageBuilder messageBuilder,
+                             SwiftMessageDao swiftMessageDao,
+                             SwiftMessageStrategyFactory strategyFactory,
+                             CanonicalMapper canonicalMapper,
                              AsyncSettlementProcessor asyncProcessor) {
         this.instructionDao = instructionDao;
         this.holdingDao = holdingDao;
         this.auditLogDao = auditLogDao;
-        this.messageBuilder = messageBuilder;
+        this.swiftMessageDao = swiftMessageDao;
+        this.strategyFactory = strategyFactory;
+        this.canonicalMapper = canonicalMapper;
         this.asyncProcessor = asyncProcessor;
     }
 
     /**
      * Phase 1 (synchronous): validate, persist instruction with PENDING status,
-     * build MT541 message, then trigger async XA processing.
-     * Returns immediately after DB save — no JMS involved.
+     * build outbound SWIFT message (MT or MX), store in SWIFT_MESSAGE table,
+     * then trigger async XA processing.
      */
     @Transactional
     public SettlementInstruction submitInstruction(SettlementRequest request) {
         String tradeRef = generateTradeRef();
+
+        MessageStandard standard = request.getPreferredStandard() != null
+                ? MessageStandard.valueOf(request.getPreferredStandard())
+                : MessageStandard.MT;
 
         SettlementInstruction instruction = new SettlementInstruction();
         instruction.setTradeRef(tradeRef);
@@ -60,18 +75,26 @@ public class SettlementService {
         instruction.setDirection(Direction.valueOf(request.getDirection()));
         instruction.setAccountId(request.getAccountId());
         instruction.setStatus(InstructionStatus.PENDING);
-
-        String mt541Message = messageBuilder.buildMT541(instruction);
-        instruction.setMt541Raw(mt541Message);
+        instruction.setPreferredStandard(standard);
 
         instructionDao.save(instruction);
 
-        auditLogDao.save(new AuditLog(tradeRef, AuditEventType.INSTRUCTION_CREATED,
-                "Instruction saved, async XA processing queued. ISIN=" + request.getIsin()
-                        + " QTY=" + request.getQuantity()));
+        SwiftMessageStrategy strategy = strategyFactory.getStrategy(standard);
+        CanonicalSettlement canonical = canonicalMapper.toCanonical(instruction);
+        String rawMessage = strategy.buildSettlementInstruction(canonical);
+        String messageType = strategy.getOutboundMessageType(canonical);
 
-        log.info("Settlement instruction created: tradeRef={}, ISIN={}, direction={} — async send queued",
-                tradeRef, request.getIsin(), request.getDirection());
+        SwiftMessage swiftMessage = new SwiftMessage(
+                instruction.getId(), tradeRef, standard, messageType,
+                MessageDirection.OUTBOUND, rawMessage);
+        swiftMessageDao.save(swiftMessage);
+
+        auditLogDao.save(new AuditLog(tradeRef, AuditEventType.INSTRUCTION_CREATED,
+                "Instruction saved (" + standard + "/" + messageType + "), async XA processing queued. ISIN="
+                        + request.getIsin() + " QTY=" + request.getQuantity()));
+
+        log.info("Settlement instruction created: tradeRef={}, ISIN={}, direction={}, standard={} — async send queued",
+                tradeRef, request.getIsin(), request.getDirection(), standard);
 
         scheduleAfterCommit(tradeRef);
 
@@ -85,9 +108,6 @@ public class SettlementService {
                         "Settlement instruction not found: " + tradeRef));
     }
 
-    /**
-     * Reset a FAILED instruction back to PENDING and trigger async retry.
-     */
     @Transactional
     public SettlementInstruction manualRetry(String tradeRef) {
         SettlementInstruction instruction = instructionDao.findByTradeRef(tradeRef)
@@ -145,10 +165,6 @@ public class SettlementService {
         return resp;
     }
 
-    /**
-     * Submits async processing after the current transaction commits.
-     * If no active transaction (e.g. in unit tests), submits immediately.
-     */
     private void scheduleAfterCommit(String tradeRef) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {

@@ -2,11 +2,13 @@ package com.settlement.service;
 
 import com.settlement.dao.AuditLogDao;
 import com.settlement.dao.SettlementInstructionDao;
-import com.settlement.entity.AuditEventType;
-import com.settlement.entity.AuditLog;
-import com.settlement.entity.InstructionStatus;
-import com.settlement.entity.SettlementInstruction;
+import com.settlement.dao.SwiftMessageDao;
+import com.settlement.canonical.CanonicalSettlement;
+import com.settlement.entity.*;
 import com.settlement.jms.SwiftMessageSender;
+import com.settlement.strategy.CanonicalMapper;
+import com.settlement.strategy.SwiftMessageStrategy;
+import com.settlement.strategy.SwiftMessageStrategyFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -26,14 +28,23 @@ public class SettlementXaExecutor {
 
     private final SettlementInstructionDao instructionDao;
     private final AuditLogDao auditLogDao;
+    private final SwiftMessageDao swiftMessageDao;
     private final SwiftMessageSender messageSender;
+    private final SwiftMessageStrategyFactory strategyFactory;
+    private final CanonicalMapper canonicalMapper;
 
     public SettlementXaExecutor(SettlementInstructionDao instructionDao,
                                 AuditLogDao auditLogDao,
-                                SwiftMessageSender messageSender) {
+                                SwiftMessageDao swiftMessageDao,
+                                SwiftMessageSender messageSender,
+                                SwiftMessageStrategyFactory strategyFactory,
+                                CanonicalMapper canonicalMapper) {
         this.instructionDao = instructionDao;
         this.auditLogDao = auditLogDao;
+        this.swiftMessageDao = swiftMessageDao;
         this.messageSender = messageSender;
+        this.strategyFactory = strategyFactory;
+        this.canonicalMapper = canonicalMapper;
     }
 
     /**
@@ -57,10 +68,20 @@ public class SettlementXaExecutor {
             return;
         }
 
+        SwiftMessageStrategy strategy = strategyFactory.getStrategy(instruction.getPreferredStandard());
+        CanonicalSettlement canonical = canonicalMapper.toCanonical(instruction);
+        String outboundType = strategy.getOutboundMessageType(canonical);
+
+        SwiftMessage outbound = swiftMessageDao
+                .findLatestOutbound(instruction.getId(), outboundType)
+                .orElseThrow(() -> new IllegalStateException(
+                        "No outbound " + outboundType + " message found for tradeRef=" + tradeRef));
+
         instruction.setStatus(InstructionStatus.SUBMITTING);
         instructionDao.save(instruction);
 
-        messageSender.sendSwiftMessage(tradeRef, instruction.getMt541Raw());
+        messageSender.sendSwiftMessage(tradeRef, outbound.getRawPayload(),
+                outboundType, instruction.getPreferredStandard());
 
         instruction.setStatus(InstructionStatus.SENT);
         instruction.setFailureReason(null);
@@ -68,9 +89,9 @@ public class SettlementXaExecutor {
         instructionDao.save(instruction);
 
         auditLogDao.save(new AuditLog(tradeRef, AuditEventType.INSTRUCTION_SENT,
-                "MT541 sent via async XA"));
+                outboundType + " sent via async XA"));
 
-        log.info("Async settlement completed: tradeRef={}", tradeRef);
+        log.info("Async settlement completed: tradeRef={}, messageType={}", tradeRef, outboundType);
     }
 
     @Transactional

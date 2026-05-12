@@ -2,10 +2,10 @@ package com.settlement.service;
 
 import com.settlement.dao.AuditLogDao;
 import com.settlement.dao.SettlementInstructionDao;
-import com.settlement.entity.Direction;
-import com.settlement.entity.InstructionStatus;
-import com.settlement.entity.SettlementInstruction;
+import com.settlement.dao.SwiftMessageDao;
+import com.settlement.entity.*;
 import com.settlement.jms.SwiftMessageSender;
+import com.settlement.strategy.SwiftMessageStrategyFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -20,6 +20,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
@@ -40,6 +41,9 @@ class SettlementXaExecutorIT {
     private SettlementInstructionDao instructionDao;
 
     @Autowired
+    private SwiftMessageDao swiftMessageDao;
+
+    @Autowired
     private AuditLogDao auditLogDao;
 
     @Autowired
@@ -53,7 +57,8 @@ class SettlementXaExecutorIT {
     @Test
     void executeSettlement_shouldCommitOnSuccess() {
         SettlementInstruction instruction = createAndSave("TR-XA-IT-001");
-        doNothing().when(messageSender).sendSwiftMessage(anyString(), anyString());
+        createOutboundMessage(instruction);
+        doNothing().when(messageSender).sendSwiftMessage(anyString(), anyString(), anyString(), any());
 
         xaExecutor.executeSettlement("TR-XA-IT-001");
 
@@ -64,13 +69,11 @@ class SettlementXaExecutorIT {
 
     @Test
     void executeSettlement_shouldPropagateExceptionOnJmsFailure() {
-        createAndSave("TR-XA-IT-002");
+        SettlementInstruction instruction = createAndSave("TR-XA-IT-002");
+        createOutboundMessage(instruction);
         doThrow(new RuntimeException("MQ connection lost"))
-                .when(messageSender).sendSwiftMessage(anyString(), anyString());
+                .when(messageSender).sendSwiftMessage(anyString(), anyString(), anyString(), any());
 
-        // XA rollback (DB + MQ atomicity) relies on a real XA TM
-        // which is only available in Liberty; here we verify the exception propagates
-        // so the caller (AsyncSettlementProcessor) can record failure and retry
         assertThatThrownBy(() -> xaExecutor.executeSettlement("TR-XA-IT-002"))
                 .isInstanceOf(RuntimeException.class)
                 .hasMessageContaining("MQ connection lost");
@@ -97,7 +100,7 @@ class SettlementXaExecutorIT {
 
         xaExecutor.executeSettlement("TR-XA-IT-004");
 
-        verify(messageSender, never()).sendSwiftMessage(anyString(), anyString());
+        verify(messageSender, never()).sendSwiftMessage(anyString(), anyString(), anyString(), any());
     }
 
     private SettlementInstruction createAndSave(String tradeRef) {
@@ -111,7 +114,15 @@ class SettlementXaExecutorIT {
         instruction.setDirection(Direction.BUY);
         instruction.setAccountId("ACC-IT");
         instruction.setStatus(InstructionStatus.PENDING);
-        instruction.setMt541Raw("{MT541 test message}");
+        instruction.setPreferredStandard(MessageStandard.MT);
         return instructionDao.save(instruction);
+    }
+
+    private void createOutboundMessage(SettlementInstruction instruction) {
+        SwiftMessage msg = new SwiftMessage(
+                instruction.getId(), instruction.getTradeRef(),
+                MessageStandard.MT, "MT541",
+                MessageDirection.OUTBOUND, "{MT541 test message}");
+        swiftMessageDao.save(msg);
     }
 }

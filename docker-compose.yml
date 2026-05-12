@@ -65,7 +65,7 @@ services:
         condition: service_healthy
     environment:
       TZ: Asia/Shanghai
-      JVM_ARGS: -Duser.timezone=Asia/Shanghai
+      JVM_ARGS: -Duser.timezone=Asia/Shanghai -Djavax.xml.bind.JAXBContextFactory=com.sun.xml.bind.v2.ContextFactory
       ORACLE_HOST: oracle
       ORACLE_PORT: 1521
       MQ_HOST: ibmmq

@@ -42,13 +42,9 @@ public class SettlementInstruction {
     @Column(name = "ACCOUNT_ID", nullable = false, length = 50)
     private String accountId;
 
-    @Lob
-    @Column(name = "MT541_RAW")
-    private String mt541Raw;
-
-    @Lob
-    @Column(name = "MT548_RAW")
-    private String mt548Raw;
+    @Column(name = "PREFERRED_STANDARD", nullable = false, length = 5)
+    @Enumerated(EnumType.STRING)
+    private MessageStandard preferredStandard = MessageStandard.MT;
 
     @Column(name = "RETRY_COUNT", nullable = false)
     private int retryCount = 0;
@@ -153,20 +149,12 @@ public class SettlementInstruction {
         this.accountId = accountId;
     }
 
-    public String getMt541Raw() {
-        return mt541Raw;
+    public MessageStandard getPreferredStandard() {
+        return preferredStandard;
     }
 
-    public void setMt541Raw(String mt541Raw) {
-        this.mt541Raw = mt541Raw;
-    }
-
-    public String getMt548Raw() {
-        return mt548Raw;
-    }
-
-    public void setMt548Raw(String mt548Raw) {
-        this.mt548Raw = mt548Raw;
+    public void setPreferredStandard(MessageStandard preferredStandard) {
+        this.preferredStandard = preferredStandard;
     }
 
     public int getRetryCount() {
