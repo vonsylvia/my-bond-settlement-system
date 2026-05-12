@@ -6,7 +6,11 @@ A complete SWIFT bond settlement system built for IBM WebSphere + Oracle environ
 
 - **Frontend**: Vue.js 3 + Vite + Axios
 - **Backend**: Spring MVC 6 REST API
-- **SWIFT Messaging**: Prowide Core (MT541 send / MT548 receive)
+- **SWIFT Messaging**: Dual-standard support (MT and MX)
+  - **MT (FIN)**: Prowide Core — MT541 (send) / MT548 (receive)
+  - **MX (ISO 20022)**: Prowide ISO 20022 — sese.023.001.09 (send) / sese.024.001.10 (receive)
+  - **Strategy Pattern**: `SwiftMessageStrategy` interface with `MtStrategy` / `MxStrategy` implementations
+  - **Canonical Data Model**: Format-independent `CanonicalSettlement` / `CanonicalStatusAdvice` decouples business logic from message formats
 - **Message Queue**: IBM MQ via JMS
   - **Sending**: Spring JmsTemplate with application-managed MQ client connection
   - **Receiving**: Message-Driven EJB (MDB) via JCA activation spec on IBM MQ Resource Adapter
@@ -47,14 +51,14 @@ sequenceDiagram
 
     rect rgb(230, 245, 255)
         Note over SVC,DB: Phase 1 (sync): Save instruction
-        SVC->>SVC: Prowide builds MT541
-        SVC->>DB: Save instruction (PENDING) + MT541 raw
+        SVC->>SVC: CanonicalMapper → Strategy builds MT541 or sese.023
+        SVC->>DB: Save instruction (PENDING) + SWIFT_MESSAGE
     end
 
     API-->>UI: 202 Accepted (tradeRef, status=PENDING)
 
     rect rgb(240, 230, 255)
-        Note over ASYNC,MQ: Phase 2 (async XA): Send MT541
+        Note over ASYNC,MQ: Phase 2 (async XA): Send MT/MX
         SVC--)ASYNC: processSettlementAsync(tradeRef)
         ASYNC->>DB: Update status → SUBMITTING
         ASYNC->>MQ: JmsTemplate.send(SWIFT.SEND.QUEUE)
@@ -68,18 +72,19 @@ sequenceDiagram
 
     rect rgb(255, 245, 230)
         Note over MQ,GW: SWIFT Network Processing
-        MQ->>GW: MT541 (Receive Free of Payment)
+        MQ->>GW: MT541/sese.023 (Settlement Instruction)
         GW->>GW: SWIFTNet validation & routing
-        GW->>MQ: MT548 (Settlement Status)
+        GW->>MQ: MT548/sese.024 (Settlement Status)
     end
 
     rect rgb(230, 255, 230)
-        Note over MQ,DB: Inbound: MDB receives MT548 via JCA
+        Note over MQ,DB: Inbound: MDB receives MT548/sese.024 via JCA
         MQ->>MDB: JCA Activation Spec triggers onMessage()
         MDB->>MDB: ServiceRegistry.lookup("reconciliationService")
-        MDB->>REC: processSwiftReply(correlationId, mt548)
-        REC->>REC: Sanitise raw message (BOM, NUL, line endings)
-        REC->>REC: Parse MT548 (extract tradeRef & status)
+        MDB->>REC: processSwiftReply(correlationId, rawMessage)
+        REC->>REC: Auto-detect MT/MX format via StrategyFactory
+        REC->>REC: Parse status reply → CanonicalStatusAdvice
+        REC->>DB: Save inbound message to SWIFT_MESSAGE
         REC->>DB: Find instruction by tradeRef
         alt Status = MATCHED
             REC->>DB: Update status → MATCHED
@@ -209,13 +214,7 @@ docker exec -i settlement-oracle bash -c \
 # Check MQ connectivity
 curl http://localhost:9080/settlement/api/mq/health
 
-# Test MDB message delivery (sends test MT548 to reply queue)
-curl -X POST "http://localhost:9080/settlement/api/mq/test-mdb?correlationId=TEST-001"
-
-# Check application health
-curl http://localhost:9080/settlement/api/holdings
-
-# Submit a settlement instruction
+# Submit a settlement instruction (MT format, default)
 curl -X POST http://localhost:9080/settlement/api/settlement \
   -H "Content-Type: application/json" \
   -d '{
@@ -227,6 +226,29 @@ curl -X POST http://localhost:9080/settlement/api/settlement \
     "accountId": "ACC-001",
     "settlementDate": "2026-06-01"
   }'
+
+# Submit using MX (ISO 20022) format
+curl -X POST http://localhost:9080/settlement/api/settlement \
+  -H "Content-Type: application/json" \
+  -d '{
+    "isin": "DE0001102580",
+    "quantity": 50000,
+    "direction": "BUY",
+    "counterparty": "Goldman Sachs",
+    "bicCode": "GOLDUS33XXX",
+    "accountId": "ACC-001",
+    "settlementDate": "2026-06-15",
+    "preferredStandard": "MX"
+  }'
+
+# Test MDB message delivery (MT548 reply)
+curl -X POST "http://localhost:9080/settlement/api/mq/test-mdb?correlationId=TEST-001"
+
+# Test MDB with MX (sese.024) reply
+curl -X POST "http://localhost:9080/settlement/api/mq/test-mdb?correlationId=TR-XXX&standard=MX&status=matched"
+
+# Check application health
+curl http://localhost:9080/settlement/api/holdings
 ```
 
 ### 6. Build frontend (optional)
@@ -275,9 +297,16 @@ echo "test message body" | /opt/mqm/samp/bin/amqsput SWIFT.REPLY.QUEUE SETTLEMEN
 docker exec -it settlement-oracle sqlplus settlement/settlement123@//localhost:1521/XEPDB1
 
 # Useful queries
-SELECT TRADE_REF, STATUS, ISIN FROM SETTLEMENT_INSTRUCTION ORDER BY CREATED_AT DESC;
+SELECT TRADE_REF, STATUS, PREFERRED_STANDARD, ISIN FROM SETTLEMENT_INSTRUCTION ORDER BY CREATED_AT DESC;
 SELECT * FROM BOND_HOLDING;
 SELECT TRADE_REF, EVENT_TYPE, DETAIL FROM AUDIT_LOG ORDER BY CREATED_AT DESC;
+
+-- SWIFT messages (both MT and MX)
+SELECT TRADE_REF, MESSAGE_STANDARD, MESSAGE_TYPE, DIRECTION, PARSED_STATUS
+FROM SWIFT_MESSAGE ORDER BY CREATED_AT DESC FETCH FIRST 20 ROWS ONLY;
+
+-- Message type registry
+SELECT MESSAGE_TYPE, MESSAGE_STANDARD, DESCRIPTION, CATEGORY FROM MESSAGE_TYPE_REGISTRY;
 
 -- Position journal: recent movements
 SELECT ACCOUNT_ID, ISIN, MOVEMENT_TYPE, QUANTITY, BALANCE_AFTER, TRADE_REF, CREATED_AT
@@ -307,9 +336,9 @@ GROUP BY h.ACCOUNT_ID, h.ISIN, h.QUANTITY, e.BALANCE;
 
 | Module | Description |
 |--------|-------------|
-| `settlement-common` | Shared library with cross-module service bridge (ServiceRegistry) |
-| `settlement-backend` | Spring MVC WAR with REST API, service layer, JMS sender |
-| `settlement-ejb` | Message-Driven EJB for SWIFT MT548 reply processing |
+| `settlement-common` | Shared library: ServiceRegistry bridge + Canonical Data Model (`CanonicalSettlement`, `CanonicalStatusAdvice`, etc.) |
+| `settlement-backend` | Spring MVC WAR with REST API, MT/MX strategy pattern, JMS sender, reconciliation |
+| `settlement-ejb` | Message-Driven EJB for SWIFT reply processing (MT548 / sese.024) |
 | `settlement-ear` | Enterprise Archive packaging for WebSphere deployment |
 | `settlement-frontend` | Vue.js 3 single-page application |
 
@@ -328,7 +357,15 @@ my-bond-settlement-system/
 │   │   └── jdbc/                    # JDBC driver (gitignored)
 │   └── mq/
 │       └── config.mqsc              # MQ queue definitions
-├── settlement-common/               # Shared library (ServiceRegistry)
+├── settlement-common/               # Shared library
+│   └── src/main/java/com/settlement/
+│       ├── bridge/                          # ServiceRegistry cross-module bridge
+│       └── canonical/                       # Canonical Data Model (format-independent)
+│           ├── CanonicalSettlement.java      # Settlement instruction model
+│           ├── CanonicalStatusAdvice.java    # Status reply model
+│           ├── PartyInfo.java               # Party information (BIC, LEI, account)
+│           ├── SettlementDirection.java      # RECEIVE / DELIVER
+│           └── PaymentType.java             # AGAINST_PAYMENT / FREE_OF_PAYMENT
 ├── settlement-backend/              # Spring MVC WAR module
 │   └── src/main/java/com/settlement/
 │       ├── config/
@@ -336,14 +373,20 @@ my-bond-settlement-system/
 │       │   └── ServiceRegistryInitializer.java  # Registers Spring beans for MDB access
 │       ├── controller/
 │       │   ├── SettlementController.java    # REST API
-│       │   └── MqConnectivityController.java # MQ health & MDB test endpoints
+│       │   └── MqConnectivityController.java # MQ health & MDB test endpoints (MT + MX)
+│       ├── strategy/                        # MT/MX Strategy Pattern
+│       │   ├── SwiftMessageStrategy.java    # Strategy interface (build + parse)
+│       │   ├── MtStrategy.java              # MT541 build / MT548 parse
+│       │   ├── MxStrategy.java              # sese.023 build / sese.024 parse
+│       │   ├── SwiftMessageStrategyFactory.java # Strategy resolver + auto-detect
+│       │   └── CanonicalMapper.java         # Entity ↔ Canonical mapping
 │       ├── service/                         # Business logic
-│       ├── jms/SwiftMessageSender.java      # JMS sender (MT541)
+│       ├── jms/SwiftMessageSender.java      # JMS sender (MT/MX agnostic)
 │       ├── reconcile/
-│       │   ├── ReconciliationService.java       # MT548 processing & position updates
+│       │   ├── ReconciliationService.java       # MT548/sese.024 processing & position updates
 │       │   └── PositionReconciliationService.java # Incremental & daily-close reconciliation
 │       ├── dao/                             # Data access (JPA)
-│       ├── entity/                          # JPA entities
+│       ├── entity/                          # JPA entities (incl. SwiftMessage)
 │       └── dto/                             # Request/Response DTOs
 ├── settlement-ejb/                  # EJB module
 │   └── src/main/
@@ -353,10 +396,30 @@ my-bond-settlement-system/
 │           ├── ejb-jar.xml                  # EJB deployment descriptor
 │           └── ibm-ejb-jar-bnd.xml          # Liberty MDB activation spec binding
 ├── settlement-ear/                  # EAR packaging
-├── settlement-frontend/             # Vue.js 3 frontend
-└── docs/
-    └── openapi.yaml                 # API specification
+└── settlement-frontend/             # Vue.js 3 frontend
 ```
+
+## Database Schema
+
+### SWIFT Message Storage (Normalised)
+
+Messages are stored in a dedicated `SWIFT_MESSAGE` table, decoupled from the business entity `SETTLEMENT_INSTRUCTION`. This supports both MT (FIN) and MX (ISO 20022) formats and enables unlimited message types without schema changes.
+
+| Table | Purpose |
+|-------|---------|
+| `SETTLEMENT_INSTRUCTION` | Business entity — format-agnostic, stores `PREFERRED_STANDARD` (MT/MX) |
+| `SWIFT_MESSAGE` | All outbound/inbound SWIFT messages (MT541, MT548, sese.023, sese.024, etc.) with raw payload |
+| `MESSAGE_TYPE_REGISTRY` | Metadata registry mapping MT ↔ MX equivalents and categories |
+
+**Registered message types:**
+
+| Type | Standard | Category | Equivalent |
+|------|----------|----------|-----------|
+| MT541 | MT | SETTLEMENT | sese.023.001.09 |
+| MT543 | MT | SETTLEMENT | sese.023.001.09 |
+| MT548 | MT | STATUS | sese.024.001.10 |
+| sese.023.001.09 | MX | SETTLEMENT | MT541 |
+| sese.024.001.10 | MX | STATUS | MT548 |
 
 ## Position Management (CSD-Style)
 
@@ -370,7 +433,7 @@ Bond positions follow the architecture used by large Central Securities Deposito
 
 ### How It Works
 
-When a settlement is confirmed (MT548 MATCHED), the system performs two writes in a single transaction:
+When a settlement is confirmed (MT548 MATCHED or sese.024 MTCHD), the system performs two writes in a single transaction:
 
 1. **Update `BondHolding`** — the authoritative position for the `(account, isin)` pair, protected by a pessimistic lock (`SELECT FOR UPDATE`) to serialise concurrent updates
 2. **Append a `SecurityMovement`** — an immutable audit entry recording the CREDIT (BUY) or DEBIT (SELL), the quantity, and the resulting balance (`balanceAfter`)
@@ -452,20 +515,39 @@ Day 2 close: Snap EOD positions → EOD_POSITION_SNAPSHOT (date=Day2)
 
 ## Messaging Architecture
 
-### Outbound (Send MT541)
+### Canonical Data Model
+
+The message layer is fully decoupled from JPA entities via a Canonical Data Model:
 
 ```
-Spring JmsTemplate → MQQueueConnectionFactory (app-managed) → SWIFT.SEND.QUEUE → SWIFT Gateway
+Entity → CanonicalMapper → CanonicalSettlement → Strategy → SWIFT Message (MT/MX)
+SWIFT Message → Strategy → CanonicalStatusAdvice → Service → Entity
 ```
 
-### Inbound (Receive MT548)
+| Component | Role |
+|-----------|------|
+| `CanonicalSettlement` | Format-independent settlement instruction (superset of MT/MX fields) |
+| `CanonicalStatusAdvice` | Format-independent status reply (outcome, statusCode, reason) |
+| `CanonicalMapper` | Maps JPA Entity ↔ Canonical (the only class that knows both worlds) |
+| `SwiftMessageStrategy` | Interface for building/parsing messages (MT or MX) |
+| `SwiftMessageStrategyFactory` | Resolves strategy by standard; auto-detects from raw payload |
+
+### Outbound (Send MT541 / sese.023)
+
+```
+SettlementService → CanonicalMapper → Strategy.build() → SWIFT_MESSAGE (DB)
+    → SettlementXaExecutor → JmsTemplate.send(SWIFT.SEND.QUEUE) → SWIFT Gateway
+```
+
+### Inbound (Receive MT548 / sese.024)
 
 ```
 SWIFT Gateway → SWIFT.REPLY.QUEUE → JCA Activation Spec (container-managed)
     → SwiftReplyMDB.onMessage()
     → ServiceRegistry.lookup("reconciliationService")
-    → ReconciliationService.processSwiftReply()
-    → Oracle DB (update status + holdings)
+    → StrategyFactory.detectStrategy(rawMessage)  [auto-detect MT/MX]
+    → Strategy.parseStatusReply() → CanonicalStatusAdvice
+    → ReconciliationService updates status + holdings
 ```
 
 ### Cross-Module Bridge
@@ -505,7 +587,7 @@ graph LR
 
 **Why JTA is required:**
 
-1. **XA consistency (outbound)** — `AsyncSettlementProcessor.executeSettlement()` updates Oracle AND sends MT541 to MQ in the same `@Transactional` method. Using a container-managed JNDI `ConnectionFactory` (`jms/SwiftQueueCF`), both resources are enlisted in the JTA transaction. If either fails, both roll back atomically.
+1. **XA consistency (outbound)** — `AsyncSettlementProcessor.executeSettlement()` updates Oracle AND sends MT541/sese.023 to MQ in the same `@Transactional` method. Using a container-managed JNDI `ConnectionFactory` (`jms/SwiftQueueCF`), both resources are enlisted in the JTA transaction. If either fails, both roll back atomically.
 2. **MDB compatibility (inbound)** — MDB runs in a container-managed JTA transaction. Spring's `@Transactional` on `ReconciliationService.processSwiftReply()` joins this existing JTA transaction instead of attempting a local `Connection.commit()` (which would cause `DSRA9350E`).
 3. **Hibernate JTA platform** — configured via `hibernate.transaction.jta.platform` = `WebSphereLibertyJtaPlatform`.
 
@@ -563,7 +645,7 @@ Settlement submission follows a **two-phase async pattern** to minimize client l
 PENDING → SUBMITTING → SENT → MATCHED     (happy path)
 PENDING → SUBMITTING → FAILED              (all 3 retries failed)
 FAILED  → PENDING → SUBMITTING → SENT      (manual retry success)
-SENT    → (status unchanged)               (MT548 unparseable → UNKNOWN, needs manual review)
+SENT    → (status unchanged)               (MT548/sese.024 unparseable → UNKNOWN, needs manual review)
 ```
 
 ## API Endpoints
@@ -572,14 +654,46 @@ SENT    → (status unchanged)               (MT548 unparseable → UNKNOWN, nee
 |--------|------|-------------|
 | `GET` | `/api/holdings` | List all bond holdings (cached balances) |
 | `GET` | `/api/holdings/{accountId}` | Get holdings for account |
-| `POST` | `/api/settlement` | Submit settlement instruction (returns 202, async processing) |
+| `POST` | `/api/settlement` | Submit settlement instruction (supports `preferredStandard`: MT/MX) |
 | `GET` | `/api/settlement/{tradeRef}` | Get instruction status (includes `retryCount`, `failureReason`) |
+| `GET` | `/api/settlement?page=&size=` | List settlement instructions (paginated) |
 | `POST` | `/api/settlement/{tradeRef}/retry` | Manual retry for FAILED instructions |
 | `POST` | `/api/positions/reconcile` | Incremental reconciliation (only changed positions since last snapshot) |
 | `POST` | `/api/positions/daily-close` | Daily close: full reconciliation + persist snapshot as new baseline |
 | `GET` | `/api/mq/health` | IBM MQ connection health check |
-| `POST` | `/api/mq/test-mdb` | Send test MT548 to verify MDB processing |
+| `POST` | `/api/mq/test-mdb` | Send test reply (MT548 or sese.024) to verify MDB processing |
 | `GET` | `/api/mq/stats` | MDB + reconciliation metrics + live queue depth/consumer status |
+
+**Settlement submission** (`POST /api/settlement`):
+
+```json
+{
+  "isin": "US0378331005",
+  "quantity": 1000,
+  "direction": "BUY",
+  "counterparty": "Deutsche Bank",
+  "bicCode": "DEUTDEFFXXX",
+  "accountId": "ACC-001",
+  "settlementDate": "2026-06-01",
+  "preferredStandard": "MX"
+}
+```
+
+The `preferredStandard` field accepts `"MT"` (default) or `"MX"`. MT generates MT541 (FIN), MX generates sese.023.001.09 (ISO 20022 XML).
+
+**MDB test** (`POST /api/mq/test-mdb`):
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `correlationId` | `TEST-MDB-001` | Trade reference to match against |
+| `standard` | `MT` | `MT` (sends MT548) or `MX` (sends sese.024.001.10) |
+| `status` | matched | MT: `MATC`, `REJT`, `NMAT`, `PDNG`. MX: `matched`, `rejected`, `unmatched`, `pending` |
+
+Example MX test:
+
+```bash
+curl -X POST "http://localhost:9080/settlement/api/mq/test-mdb?correlationId=TR-XXX&standard=MX&status=matched"
+```
 
 ## Configuration
 
@@ -628,7 +742,7 @@ The activation spec configures `maxPoolDepth="5"`, which controls the maximum nu
 
 `GET /api/mq/stats` provides live operational visibility:
 - **MDB counters** — total received/success/failed messages with timestamps (in-memory, reset on restart)
-- **Reconciliation counters** — MT548 processing outcomes: matched/failed/pending/unknown/unmatched (in-memory, reset on restart). A non-zero `totalUnknown` indicates MT548 messages that could not be parsed and require manual review
+- **Reconciliation counters** — MT548/sese.024 processing outcomes: matched/failed/pending/unknown/unmatched (in-memory, reset on restart). A non-zero `totalUnknown` indicates messages that could not be parsed and require manual review
 - **Queue status** — current depth, max depth, open input/output handles, last put/get times (live from MQ via PCF admin commands)
 
 ## Monitoring (Prometheus + Grafana)
@@ -665,7 +779,7 @@ The project includes a full observability stack via Docker:
 - Liberty HTTP request rate
 - Liberty connection pool usage
 - JVM heap memory
-- MT548 reconciliation status breakdown (matched/failed/pending/unknown)
+- Settlement status breakdown (matched/failed/pending/unknown) — covers both MT548 and sese.024
 
 **Usage:**
 
@@ -714,4 +828,4 @@ Check for `DSRA9350E: Operation Connection.commit is not allowed during a global
 
 ## API Documentation
 
-See [docs/openapi.yaml](docs/openapi.yaml) for the full OpenAPI 3.0 specification.
+See the [API Endpoints](#api-endpoints) section above for the complete REST API reference.

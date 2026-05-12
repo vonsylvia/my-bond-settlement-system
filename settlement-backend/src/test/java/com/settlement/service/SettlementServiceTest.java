@@ -1,20 +1,28 @@
 package com.settlement.service;
 
+import com.settlement.canonical.CanonicalSettlement;
+import com.settlement.canonical.PartyInfo;
+import com.settlement.canonical.PaymentType;
+import com.settlement.canonical.SettlementDirection;
 import com.settlement.dao.AuditLogDao;
 import com.settlement.dao.BondHoldingDao;
 import com.settlement.dao.SettlementInstructionDao;
+import com.settlement.dao.SwiftMessageDao;
 import com.settlement.dto.SettlementRequest;
-import com.settlement.entity.Direction;
-import com.settlement.entity.InstructionStatus;
-import com.settlement.entity.SettlementInstruction;
+import com.settlement.entity.*;
 import com.settlement.exception.BusinessException;
 import com.settlement.exception.ResourceNotFoundException;
+import com.settlement.strategy.CanonicalMapper;
+import com.settlement.strategy.MtStrategy;
+import com.settlement.strategy.SwiftMessageStrategy;
+import com.settlement.strategy.SwiftMessageStrategyFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Optional;
@@ -23,6 +31,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.lenient;
 
 @ExtendWith(MockitoExtension.class)
 class SettlementServiceTest {
@@ -37,10 +46,19 @@ class SettlementServiceTest {
     private AuditLogDao auditLogDao;
 
     @Mock
-    private SwiftMessageBuilder messageBuilder;
+    private SwiftMessageDao swiftMessageDao;
+
+    @Mock
+    private SwiftMessageStrategyFactory strategyFactory;
+
+    @Mock
+    private CanonicalMapper canonicalMapper;
 
     @Mock
     private AsyncSettlementProcessor asyncProcessor;
+
+    @Mock
+    private SwiftMessageStrategy mtStrategy;
 
     private SettlementService settlementService;
 
@@ -49,7 +67,8 @@ class SettlementServiceTest {
     @BeforeEach
     void setUp() {
         settlementService = new SettlementService(
-                instructionDao, holdingDao, auditLogDao, messageBuilder, asyncProcessor);
+                instructionDao, holdingDao, auditLogDao, swiftMessageDao,
+                strategyFactory, canonicalMapper, asyncProcessor);
 
         validRequest = new SettlementRequest();
         validRequest.setIsin("US0378331005");
@@ -59,12 +78,27 @@ class SettlementServiceTest {
         validRequest.setBicCode("GOLDUS33XXX");
         validRequest.setDirection("BUY");
         validRequest.setAccountId("ACC-001");
+
+        CanonicalSettlement dummyCanonical = new CanonicalSettlement(
+                "TR-DUMMY", "US0378331005", LocalDate.of(2026, 5, 15),
+                new BigDecimal("1000000.00"), SettlementDirection.RECEIVE,
+                PaymentType.AGAINST_PAYMENT,
+                PartyInfo.ofBic("OWNRBICXXX"), PartyInfo.ofBic("GOLDUS33XXX"),
+                "ACC-001", null, null, null);
+        lenient().when(canonicalMapper.toCanonical(any())).thenReturn(dummyCanonical);
     }
 
     @Test
     void submitInstruction_shouldPersistWithPendingStatus() {
-        when(messageBuilder.buildMT541(any())).thenReturn("{MT541 content}");
-        when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(strategyFactory.getStrategy(MessageStandard.MT)).thenReturn(mtStrategy);
+        when(mtStrategy.buildSettlementInstruction(any())).thenReturn("{MT541 content}");
+        when(mtStrategy.getOutboundMessageType(any())).thenReturn("MT541");
+        when(instructionDao.save(any())).thenAnswer(inv -> {
+            SettlementInstruction si = inv.getArgument(0);
+            si.setId(1L);
+            return si;
+        });
+        when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         SettlementInstruction result = settlementService.submitInstruction(validRequest);
 
@@ -73,17 +107,47 @@ class SettlementServiceTest {
         assertThat(result.getDirection()).isEqualTo(Direction.BUY);
         assertThat(result.getStatus()).isEqualTo(InstructionStatus.PENDING);
         assertThat(result.getTradeRef()).startsWith("TR-");
-        assertThat(result.getMt541Raw()).isEqualTo("{MT541 content}");
+        assertThat(result.getPreferredStandard()).isEqualTo(MessageStandard.MT);
 
         verify(instructionDao).save(any(SettlementInstruction.class));
-        verify(messageBuilder).buildMT541(any());
+        verify(swiftMessageDao).save(any(SwiftMessage.class));
         verify(auditLogDao).save(any());
     }
 
     @Test
+    void submitInstruction_shouldStoreSwiftMessageSeparately() {
+        when(strategyFactory.getStrategy(MessageStandard.MT)).thenReturn(mtStrategy);
+        when(mtStrategy.buildSettlementInstruction(any())).thenReturn("{MT541 content}");
+        when(mtStrategy.getOutboundMessageType(any())).thenReturn("MT541");
+        when(instructionDao.save(any())).thenAnswer(inv -> {
+            SettlementInstruction si = inv.getArgument(0);
+            si.setId(1L);
+            return si;
+        });
+        when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        settlementService.submitInstruction(validRequest);
+
+        ArgumentCaptor<SwiftMessage> msgCaptor = ArgumentCaptor.forClass(SwiftMessage.class);
+        verify(swiftMessageDao).save(msgCaptor.capture());
+        SwiftMessage savedMsg = msgCaptor.getValue();
+        assertThat(savedMsg.getRawPayload()).isEqualTo("{MT541 content}");
+        assertThat(savedMsg.getMessageType()).isEqualTo("MT541");
+        assertThat(savedMsg.getMessageStandard()).isEqualTo(MessageStandard.MT);
+        assertThat(savedMsg.getDirection()).isEqualTo(MessageDirection.OUTBOUND);
+    }
+
+    @Test
     void submitInstruction_shouldTriggerAsyncProcessing() {
-        when(messageBuilder.buildMT541(any())).thenReturn("{MT541}");
-        when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(strategyFactory.getStrategy(MessageStandard.MT)).thenReturn(mtStrategy);
+        when(mtStrategy.buildSettlementInstruction(any())).thenReturn("{MT541}");
+        when(mtStrategy.getOutboundMessageType(any())).thenReturn("MT541");
+        when(instructionDao.save(any())).thenAnswer(inv -> {
+            SettlementInstruction si = inv.getArgument(0);
+            si.setId(1L);
+            return si;
+        });
+        when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         SettlementInstruction result = settlementService.submitInstruction(validRequest);
 
@@ -92,8 +156,15 @@ class SettlementServiceTest {
 
     @Test
     void submitInstruction_shouldGenerateUniqueTradeRef() {
-        when(messageBuilder.buildMT541(any())).thenReturn("{MT541}");
-        when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(strategyFactory.getStrategy(MessageStandard.MT)).thenReturn(mtStrategy);
+        when(mtStrategy.buildSettlementInstruction(any())).thenReturn("{MT541}");
+        when(mtStrategy.getOutboundMessageType(any())).thenReturn("MT541");
+        when(instructionDao.save(any())).thenAnswer(inv -> {
+            SettlementInstruction si = inv.getArgument(0);
+            si.setId(1L);
+            return si;
+        });
+        when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         SettlementInstruction result1 = settlementService.submitInstruction(validRequest);
         SettlementInstruction result2 = settlementService.submitInstruction(validRequest);
@@ -119,17 +190,6 @@ class SettlementServiceTest {
         assertThatThrownBy(() -> settlementService.findByTradeRef("TR-NONEXIST"))
                 .isInstanceOf(ResourceNotFoundException.class)
                 .hasMessageContaining("TR-NONEXIST");
-    }
-
-    @Test
-    void submitInstruction_shouldSetMt541Raw() {
-        String mt541Content = "{1:F01...MT541 message...}";
-        when(messageBuilder.buildMT541(any())).thenReturn(mt541Content);
-        when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
-
-        SettlementInstruction result = settlementService.submitInstruction(validRequest);
-
-        assertThat(result.getMt541Raw()).isEqualTo(mt541Content);
     }
 
     @Test

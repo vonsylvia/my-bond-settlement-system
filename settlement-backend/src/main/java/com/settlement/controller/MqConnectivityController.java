@@ -1,5 +1,7 @@
 package com.settlement.controller;
 
+import com.prowidesoftware.swift.model.mx.MxSese02400110;
+import com.prowidesoftware.swift.model.mx.dic.*;
 import com.settlement.bridge.MdbMetricsHolder;
 import com.settlement.reconcile.ReconciliationMetrics;
 import com.settlement.service.MqMonitorService;
@@ -73,15 +75,23 @@ public class MqConnectivityController {
     }
 
     /**
-     * Sends a test MT548 reply message to SWIFT.REPLY.QUEUE.
-     * The SwiftReplyMDB should pick it up and process it through ReconciliationService.
-     * Uses a test-prefixed correlation ID to distinguish from real messages.
+     * Sends a test settlement status reply to SWIFT.REPLY.QUEUE.
+     * Supports both MT (MT548) and MX (sese.024.001.10) formats.
+     *
+     * @param correlationId the trade reference or test correlation ID
+     * @param standard      "MT" (default) or "MX"
+     * @param status        "MATC" (default), "REJT", "NMAT", "PDNG" for MT;
+     *                      "matched" (default), "unmatched", "rejected", "pending" for MX
      */
     @PostMapping("/test-mdb")
-    public Map<String, Object> testMdb(@RequestParam(defaultValue = "TEST-MDB-001") String correlationId) {
+    public Map<String, Object> testMdb(
+            @RequestParam(defaultValue = "TEST-MDB-001") String correlationId,
+            @RequestParam(defaultValue = "MT") String standard,
+            @RequestParam(defaultValue = "") String status) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("timestamp", Instant.now().toString());
         result.put("correlationId", correlationId);
+        result.put("standard", standard);
 
         JmsTemplate jmsTemplate = jmsTemplateProvider.getIfAvailable();
         if (jmsTemplate == null) {
@@ -90,19 +100,25 @@ public class MqConnectivityController {
             return result;
         }
 
-        String testMt548 = buildTestMt548(correlationId);
+        boolean isMx = "MX".equalsIgnoreCase(standard);
+        String messageType = isMx ? "sese.024.001.10" : "MT548";
+        String payload = isMx
+                ? buildTestSese024(correlationId, status.isEmpty() ? "matched" : status)
+                : buildTestMt548(correlationId, status.isEmpty() ? "MATC" : status);
 
         try {
             jmsTemplate.send("SWIFT.REPLY.QUEUE", session -> {
-                var textMessage = session.createTextMessage(testMt548);
+                var textMessage = session.createTextMessage(payload);
                 textMessage.setJMSCorrelationID(correlationId);
-                textMessage.setStringProperty("MessageType", "MT548");
+                textMessage.setStringProperty("MessageType", messageType);
+                textMessage.setStringProperty("MessageStandard", isMx ? "MX" : "MT");
                 textMessage.setStringProperty("TradeRef", correlationId);
                 textMessage.setStringProperty("TestMessage", "true");
                 return textMessage;
             });
             result.put("status", "SENT");
-            result.put("message", "Test MT548 message sent to SWIFT.REPLY.QUEUE — check MDB logs for processing");
+            result.put("messageType", messageType);
+            result.put("message", "Test " + messageType + " message sent to SWIFT.REPLY.QUEUE");
             result.put("destination", "SWIFT.REPLY.QUEUE");
         } catch (Exception e) {
             log.error("Failed to send test MDB message", e);
@@ -135,15 +151,42 @@ public class MqConnectivityController {
         return result;
     }
 
-    private String buildTestMt548(String tradeRef) {
+    private String buildTestMt548(String tradeRef, String statusCode) {
         return "{1:F01TESTBIC0AXXX0000000000}" +
                "{2:O5481200000000TESTBIC0AXXX00000000000000000000N}" +
                "{4:\n" +
                ":16R:GENL\n" +
                ":20C::SEME//" + tradeRef + "\n" +
                ":23G:INST\n" +
-               ":25D::MTCH//MATC\n" +
+               ":25D::MTCH//" + statusCode + "\n" +
                ":16S:GENL\n" +
                "-}";
+    }
+
+    /**
+     * Builds a test sese.024.001.10 XML using Prowide model objects
+     * to ensure it is parseable by the MxStrategy.
+     */
+    private String buildTestSese024(String tradeRef, String statusType) {
+        MxSese02400110 mx = new MxSese02400110();
+        SecuritiesSettlementTransactionStatusAdviceV10 advice =
+                new SecuritiesSettlementTransactionStatusAdviceV10();
+
+        advice.setTxId(new TransactionIdentifications31()
+                .setAcctOwnrTxId(tradeRef));
+
+        switch (statusType.toLowerCase()) {
+            case "unmatched" -> advice.setMtchgSts(
+                    new MatchingStatus24Choice().setUmtchd(new UnmatchedStatus16Choice()));
+            case "rejected" -> advice.setPrcgSts(
+                    new ProcessingStatus74Choice().setRjctd(new RejectionStatus21Choice()));
+            case "pending" -> advice.setPrcgSts(
+                    new ProcessingStatus74Choice().setPdgPrcg(new PendingProcessingStatus11Choice()));
+            default -> advice.setMtchgSts(
+                    new MatchingStatus24Choice().setMtchd(new ProprietaryReason4()));
+        }
+
+        mx.setSctiesSttlmTxStsAdvc(advice);
+        return mx.message();
     }
 }

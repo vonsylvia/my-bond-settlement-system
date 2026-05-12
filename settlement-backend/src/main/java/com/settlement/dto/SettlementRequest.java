@@ -34,6 +34,9 @@ public class SettlementRequest {
     @Size(max = 50, message = "Account ID must not exceed 50 characters")
     private String accountId;
 
+    @Pattern(regexp = "^(MT|MX)?$", message = "Preferred standard must be MT or MX")
+    private String preferredStandard;
+
     public String getIsin() {
         return isin;
     }
@@ -88,5 +91,13 @@ public class SettlementRequest {
 
     public void setAccountId(String accountId) {
         this.accountId = accountId;
+    }
+
+    public String getPreferredStandard() {
+        return preferredStandard;
+    }
+
+    public void setPreferredStandard(String preferredStandard) {
+        this.preferredStandard = preferredStandard;
     }
 }

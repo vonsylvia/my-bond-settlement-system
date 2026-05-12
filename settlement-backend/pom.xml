@@ -86,10 +86,28 @@
             <artifactId>jackson-datatype-jsr310</artifactId>
         </dependency>
 
-        <!-- Prowide SWIFT -->
+        <!-- Prowide SWIFT (MT / FIN) -->
         <dependency>
             <groupId>com.prowidesoftware</groupId>
             <artifactId>pw-swift-core</artifactId>
+        </dependency>
+
+        <!-- Prowide ISO 20022 (MX) -->
+        <dependency>
+            <groupId>com.prowidesoftware</groupId>
+            <artifactId>pw-iso20022</artifactId>
+        </dependency>
+
+        <!-- JAXB 2.x (required by pw-iso20022 which uses javax.xml.bind on Java 11+) -->
+        <dependency>
+            <groupId>javax.xml.bind</groupId>
+            <artifactId>jaxb-api</artifactId>
+            <version>2.3.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.glassfish.jaxb</groupId>
+            <artifactId>jaxb-runtime</artifactId>
+            <version>2.3.9</version>
         </dependency>
 
         <!-- IBM MQ Jakarta client for application-managed sending -->
