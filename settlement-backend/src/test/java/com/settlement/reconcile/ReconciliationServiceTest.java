@@ -209,7 +209,7 @@ class ReconciliationServiceTest {
     }
 
     @Test
-    void processSwiftReply_shouldFailOnInsufficientHoldings_forSell() {
+    void processSwiftReply_shouldMarkFailed_onInsufficientHoldings_forSell() {
         sampleInstruction.setDirection(Direction.SELL);
         sampleInstruction.setQuantity(new BigDecimal("600000.00"));
 
@@ -220,31 +220,33 @@ class ReconciliationServiceTest {
 
         when(instructionDao.findByTradeRef("TR-TEST123456")).thenReturn(Optional.of(sampleInstruction));
         when(holdingDao.findByAccountAndIsinForUpdate("ACC-001", "US0378331005")).thenReturn(Optional.of(existingHolding));
+        when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(swiftMessageDao.nextSequenceNo(anyLong(), anyString(), any())).thenReturn(1);
         when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThatThrownBy(() -> reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Insufficient");
+        reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED);
 
+        assertThat(sampleInstruction.getStatus()).isEqualTo(InstructionStatus.FAILED);
+        assertThat(sampleInstruction.getFailureReason()).contains("Insufficient");
         verify(movementDao, never()).save(any());
+        verify(holdingDao, never()).save(any());
     }
 
     @Test
-    void processSwiftReply_shouldFailImmediately_whenSellingWithNoHolding() {
+    void processSwiftReply_shouldMarkFailed_whenSellingWithNoHolding() {
         sampleInstruction.setDirection(Direction.SELL);
         sampleInstruction.setQuantity(new BigDecimal("100000.00"));
 
         when(instructionDao.findByTradeRef("TR-TEST123456")).thenReturn(Optional.of(sampleInstruction));
         when(holdingDao.findByAccountAndIsinForUpdate("ACC-001", "US0378331005")).thenReturn(Optional.empty());
+        when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(swiftMessageDao.nextSequenceNo(anyLong(), anyString(), any())).thenReturn(1);
         when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        assertThatThrownBy(() -> reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED))
-                .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("Cannot sell")
-                .hasMessageContaining("no existing holding");
+        reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED);
 
+        assertThat(sampleInstruction.getStatus()).isEqualTo(InstructionStatus.FAILED);
+        assertThat(sampleInstruction.getFailureReason()).contains("no existing holding");
         verify(holdingDao, never()).save(any());
         verify(movementDao, never()).save(any());
     }
@@ -264,24 +266,55 @@ class ReconciliationServiceTest {
 
     @Test
     void processSwiftReply_shouldLogUnmatched_whenInstructionNotFound() {
+        String mt548WithUnknownRef =
+                "{1:F01BANKUS33AXXX0000000000}{2:O5481200260515GOLDUS33AXXX00000000002605150000N}{4:\r\n" +
+                ":16R:GENL\r\n" +
+                ":20C::SEME//TR-UNKNOWN\r\n" +
+                ":23G:INST\r\n" +
+                ":16S:GENL\r\n" +
+                ":16R:STAT\r\n" +
+                ":25D::MTCH//MATC\r\n" +
+                ":16S:STAT\r\n" +
+                "-}";
         when(instructionDao.findByTradeRef("TR-UNKNOWN")).thenReturn(Optional.empty());
 
-        reconciliationService.processSwiftReply("TR-UNKNOWN", "some raw message");
+        reconciliationService.processSwiftReply("TR-UNKNOWN", mt548WithUnknownRef);
 
         verify(auditLogDao).save(any(AuditLog.class));
         verify(instructionDao, never()).save(any());
     }
 
     @Test
-    void processSwiftReply_shouldAuditUnknownStatus_whenMt548Unparseable() {
+    void processSwiftReply_shouldRejectMessage_whenTradeRefCannotBeExtracted() {
         String garbledMessage = "this is not a valid MT548 message at all";
+
+        reconciliationService.processSwiftReply("CORR-ID-123", garbledMessage);
+
+        verify(instructionDao, never()).findByTradeRef(anyString());
+        verify(instructionDao, never()).save(any());
+        verify(holdingDao, never()).save(any());
+
+        verify(auditLogDao).save(any(AuditLog.class));
+        assertThat(metrics.getUnmatchedCount()).isEqualTo(1);
+        verify(alertService).sendUnknownStatusAlert("CORR-ID-123", null);
+    }
+
+    @Test
+    void processSwiftReply_shouldAuditUnknownStatus_whenMt548StatusUnparseable() {
+        String mt548WithBadStatus =
+                "{1:F01BANKUS33AXXX0000000000}{2:O5481200260515GOLDUS33AXXX00000000002605150000N}{4:\r\n" +
+                ":16R:GENL\r\n" +
+                ":20C::SEME//TR-TEST123456\r\n" +
+                ":23G:INST\r\n" +
+                ":16S:GENL\r\n" +
+                "-}";
 
         when(instructionDao.findByTradeRef("TR-TEST123456")).thenReturn(Optional.of(sampleInstruction));
         when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(swiftMessageDao.nextSequenceNo(anyLong(), anyString(), any())).thenReturn(1);
         when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        reconciliationService.processSwiftReply("TR-TEST123456", garbledMessage);
+        reconciliationService.processSwiftReply("TR-TEST123456", mt548WithBadStatus);
 
         assertThat(sampleInstruction.getStatus()).isEqualTo(InstructionStatus.SENT);
         verify(holdingDao, never()).save(any());

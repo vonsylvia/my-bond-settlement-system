@@ -37,7 +37,8 @@ public interface SwiftMessageStrategy {
 
     /**
      * Extracts the trade reference from an inbound reply payload.
-     * Falls back to the provided JMS correlation ID if extraction fails.
+     * Returns {@code null} if the trade reference cannot be determined
+     * (the caller must handle this as an unprocessable message).
      */
-    String extractTradeRef(String rawPayload, String fallbackCorrelationId);
+    String extractTradeRef(String rawPayload);
 }

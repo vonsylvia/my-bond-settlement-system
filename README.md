@@ -63,8 +63,10 @@ sequenceDiagram
         ASYNC->>DB: Update status → SUBMITTING
         ASYNC->>MQ: JmsTemplate.send(SWIFT.SEND.QUEUE)
         ASYNC->>DB: Update status → SENT
-        Note over ASYNC: On failure: exponential backoff retry<br/>(2s → 4s → 8s, max 3 attempts)
-        alt All retries failed
+        Note over ASYNC: On failure: exponential backoff with jitter<br/>(~2s → ~4s → ~8s, max 3 attempts, non-blocking)
+        alt Retry pending (not exhausted)
+            ASYNC->>DB: Update status → RETRYING
+        else All retries failed
             ASYNC->>DB: Update status → FAILED
             ASYNC--)ASYNC: Webhook alert
         end
@@ -416,7 +418,6 @@ Messages are stored in a dedicated `SWIFT_MESSAGE` table, decoupled from the bus
 | Type | Standard | Category | Equivalent |
 |------|----------|----------|-----------|
 | MT541 | MT | SETTLEMENT | sese.023.001.09 |
-| MT543 | MT | SETTLEMENT | sese.023.001.09 |
 | MT548 | MT | STATUS | sese.024.001.10 |
 | sese.023.001.09 | MX | SETTLEMENT | MT541 |
 | sese.024.001.10 | MX | STATUS | MT548 |
@@ -631,22 +632,27 @@ Settlement submission follows a **two-phase async pattern** to minimize client l
 
 | Aspect | Detail |
 |--------|--------|
-| Strategy | Exponential backoff: 2s → 4s → 8s (max 30s) |
+| Strategy | Exponential backoff with full jitter: ~1-2s → ~2-4s → ~4-8s (cap 30s) |
 | Max attempts | 3 |
-| Retry trigger | Inline in the async thread (no DB polling needed) |
-| Final state | `FAILED` with `failureReason` and `retryCount` recorded |
+| Non-retryable errors | `NonRetryableSettlementException` skips all retries, marks FAILED immediately |
+| Retry trigger | `ScheduledExecutorService` delay (non-blocking, threads return to pool during backoff) |
+| Intermediate state | `RETRYING` with `failureReason` and `retryCount` recorded (not yet exhausted) |
+| Final state | `FAILED` with `failureReason` and `retryCount` recorded (all retries exhausted) |
 | Webhook alert | Submitted to `alertExecutor` when all retries exhausted (configurable URL) |
 | Manual retry | Traders can retry via `POST /api/settlement/{tradeRef}/retry` |
-| Crash recovery | Scheduler scans for orphaned `SUBMITTING`/`PENDING` every 120s |
+| Crash recovery | Scheduler scans for orphaned `SUBMITTING` (stuck > 5min) and `RETRYING`/`PENDING` every 120s |
 
 **Status flow:**
 
 ```
-PENDING → SUBMITTING → SENT → MATCHED     (happy path)
-PENDING → SUBMITTING → FAILED              (all 3 retries failed)
-FAILED  → PENDING → SUBMITTING → SENT      (manual retry success)
-SENT    → (status unchanged)               (MT548/sese.024 unparseable → UNKNOWN, needs manual review)
+PENDING → SUBMITTING → SENT → MATCHED          (happy path)
+PENDING → SUBMITTING → RETRYING → ... → FAILED (all 3 retries failed)
+PENDING → SUBMITTING → RETRYING → SENT         (succeeded on retry)
+FAILED  → PENDING → SUBMITTING → SENT          (manual retry success)
+SENT    → (status unchanged)                    (MT548/sese.024 unparseable → UNKNOWN, needs manual review)
 ```
+
+> **Note:** During retries, the status is `RETRYING` (not `FAILED`) so API consumers can distinguish between a transient retry and a terminal failure.
 
 ## API Endpoints
 

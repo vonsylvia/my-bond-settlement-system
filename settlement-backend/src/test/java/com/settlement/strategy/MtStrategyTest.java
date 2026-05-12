@@ -87,14 +87,14 @@ class MtStrategyTest {
 
     @Test
     void extractTradeRef_shouldExtractFromMessage() {
-        String ref = strategy.extractTradeRef(MT548_MATCHED, "FALLBACK");
+        String ref = strategy.extractTradeRef(MT548_MATCHED);
         assertThat(ref).isEqualTo("TR-TEST123456");
     }
 
     @Test
-    void extractTradeRef_shouldFallbackToCorrelationId() {
-        String ref = strategy.extractTradeRef("garbled", "FALLBACK-REF");
-        assertThat(ref).isEqualTo("FALLBACK-REF");
+    void extractTradeRef_shouldReturnNull_forGarbled() {
+        String ref = strategy.extractTradeRef("garbled");
+        assertThat(ref).isNull();
     }
 
     @Test

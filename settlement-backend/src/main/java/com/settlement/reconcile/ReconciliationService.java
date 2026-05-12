@@ -16,6 +16,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import com.settlement.exception.HoldingsValidationException;
+
 import java.math.BigDecimal;
 import java.util.Optional;
 
@@ -62,7 +64,19 @@ public class ReconciliationService implements ReconciliationHandler {
 
         SwiftMessageStrategy strategy = strategyFactory.detectStrategy(rawMessage);
 
-        String tradeRef = strategy.extractTradeRef(rawMessage, correlationId);
+        CanonicalStatusAdvice statusAdvice = strategy.parseStatusReply(rawMessage);
+
+        String tradeRef = statusAdvice.transactionId();
+        if (tradeRef == null || tradeRef.isBlank()) {
+            log.error("Cannot extract tradeRef from inbound {} reply, correlationId={}. " +
+                    "Message requires manual review.", strategy.getInboundStatusType(), correlationId);
+            auditLogDao.save(new AuditLog(correlationId, AuditEventType.RECONCILE_UNMATCHED,
+                    "Failed to extract tradeRef from " + strategy.getInboundStatusType()
+                    + " — message unprocessable, requires manual review"));
+            metrics.recordUnmatched();
+            alertService.sendUnknownStatusAlert(correlationId, null);
+            return;
+        }
 
         Optional<SettlementInstruction> optInstruction = instructionDao.findByTradeRef(tradeRef);
         if (optInstruction.isEmpty()) {
@@ -75,7 +89,14 @@ public class ReconciliationService implements ReconciliationHandler {
 
         SettlementInstruction instruction = optInstruction.get();
 
-        CanonicalStatusAdvice statusAdvice = strategy.parseStatusReply(rawMessage);
+        if (!isEligibleForStatusUpdate(instruction)) {
+            log.warn("Ignoring {} reply for instruction in non-receivable state: tradeRef={}, status={}",
+                    strategy.getInboundStatusType(), tradeRef, instruction.getStatus());
+            auditLogDao.save(new AuditLog(tradeRef, AuditEventType.RECONCILE_UNMATCHED,
+                    "Ignored " + strategy.getInboundStatusType() + " reply: instruction status is "
+                    + instruction.getStatus() + " (not eligible for status updates)"));
+            return;
+        }
 
         String inboundType = strategy.getInboundStatusType();
         int seqNo = swiftMessageDao.nextSequenceNo(
@@ -100,8 +121,27 @@ public class ReconciliationService implements ReconciliationHandler {
     }
 
     private void handleMatched(SettlementInstruction instruction) {
+        if (instruction.getStatus() == InstructionStatus.MATCHED) {
+            log.warn("Duplicate MATCHED reply ignored (idempotent): tradeRef={}", instruction.getTradeRef());
+            metrics.recordMatched();
+            return;
+        }
+
+        try {
+            updateHoldings(instruction);
+        } catch (HoldingsValidationException e) {
+            log.error("Holdings update failed for MATCHED instruction: tradeRef={}, reason={}",
+                    instruction.getTradeRef(), e.getMessage());
+            instruction.setStatus(InstructionStatus.FAILED);
+            instruction.setFailureReason("Holdings update failed: " + e.getMessage());
+            auditLogDao.save(new AuditLog(instruction.getTradeRef(), AuditEventType.SETTLEMENT_FAILED,
+                    "MATCHED but holdings update failed: " + e.getMessage()));
+            alertService.sendUnknownStatusAlert(instruction.getTradeRef(), instruction.getIsin());
+            metrics.recordFailed();
+            return;
+        }
+
         instruction.setStatus(InstructionStatus.MATCHED);
-        updateHoldings(instruction);
         auditLogDao.save(new AuditLog(instruction.getTradeRef(), AuditEventType.SETTLEMENT_MATCHED,
                 "Settlement confirmed: ISIN=" + instruction.getIsin() +
                 " QTY=" + instruction.getQuantity() +
@@ -111,6 +151,12 @@ public class ReconciliationService implements ReconciliationHandler {
     }
 
     private void handleFailed(SettlementInstruction instruction) {
+        if (instruction.getStatus() == InstructionStatus.FAILED) {
+            log.warn("Duplicate FAILED reply ignored (idempotent): tradeRef={}", instruction.getTradeRef());
+            metrics.recordFailed();
+            return;
+        }
+
         instruction.setStatus(InstructionStatus.FAILED);
         auditLogDao.save(new AuditLog(instruction.getTradeRef(), AuditEventType.SETTLEMENT_FAILED,
                 "Settlement failed for ISIN=" + instruction.getIsin()));
@@ -157,14 +203,14 @@ public class ReconciliationService implements ReconciliationHandler {
         } else {
             holding = optHolding.orElseThrow(() -> {
                 log.error("No holding record for SELL: account={}, isin={}", accountId, isin);
-                return new IllegalStateException(
+                return new HoldingsValidationException(
                         "Cannot sell: no existing holding for account=" + accountId + ", isin=" + isin);
             });
             newBalance = holding.getQuantity().subtract(quantity);
             if (newBalance.compareTo(BigDecimal.ZERO) < 0) {
                 log.error("Insufficient holdings for SELL: account={}, isin={}, current={}, requested={}",
                         accountId, isin, holding.getQuantity(), quantity);
-                throw new IllegalStateException("Insufficient bond holdings for settlement");
+                throw new HoldingsValidationException("Insufficient bond holdings for settlement");
             }
         }
 
@@ -184,5 +230,17 @@ public class ReconciliationService implements ReconciliationHandler {
         h.setIsin(isin);
         h.setQuantity(BigDecimal.ZERO);
         return h;
+    }
+
+    /**
+     * Only instructions that have been sent (or already matched for idempotent re-processing)
+     * are eligible to receive CSD status replies. Instructions in PENDING, SUBMITTING,
+     * RETRYING, or CANCELLED states should not be processing inbound messages.
+     */
+    private static boolean isEligibleForStatusUpdate(SettlementInstruction instruction) {
+        return switch (instruction.getStatus()) {
+            case SENT, MATCHED, FAILED -> true;
+            case PENDING, SUBMITTING, RETRYING, CANCELLED -> false;
+        };
     }
 }

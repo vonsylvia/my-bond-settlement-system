@@ -19,6 +19,7 @@ export default {
         case 'SENT': return 'sent'
         case 'MATCHED': return 'matched'
         case 'FAILED': return 'failed'
+        case 'RETRYING': return 'retrying'
         case 'CANCELLED': return 'cancelled'
         default: return 'pending'
       }
@@ -61,6 +62,11 @@ export default {
 .status-badge.failed {
   background: #fbe9e7;
   color: #c62828;
+}
+
+.status-badge.retrying {
+  background: #fff8e1;
+  color: #f57f17;
 }
 
 .status-badge.cancelled {

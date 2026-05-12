@@ -7,6 +7,7 @@ import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.TypedQuery;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -61,15 +62,20 @@ public class SettlementInstructionDao {
 
     /**
      * Directly updates failure fields without a prior SELECT.
+     * Sets status to RETRYING if retries remain, or FAILED when exhausted.
      * Returns the number of rows updated (0 if tradeRef not found).
      */
-    public int updateFailure(String tradeRef, int retryCount, String failureReason) {
+    public int updateFailure(String tradeRef, int retryCount, String failureReason,
+                             boolean exhausted) {
+        InstructionStatus targetStatus = exhausted
+                ? InstructionStatus.FAILED
+                : InstructionStatus.RETRYING;
         return entityManager.createQuery(
             "UPDATE SettlementInstruction s " +
             "SET s.status = :status, s.retryCount = :retryCount, s.failureReason = :reason " +
             "WHERE s.tradeRef = :tradeRef"
         )
-        .setParameter("status", InstructionStatus.FAILED)
+        .setParameter("status", targetStatus)
         .setParameter("retryCount", retryCount)
         .setParameter("reason", failureReason)
         .setParameter("tradeRef", tradeRef)
@@ -86,6 +92,39 @@ public class SettlementInstructionDao {
         )
         .setParameter("toStatus", toStatus)
         .setParameter("fromStatus", fromStatus)
+        .executeUpdate();
+    }
+
+    /**
+     * Resets only instructions stuck in {@code fromStatus} for longer than {@code threshold}.
+     * Prevents resetting instructions that are still actively being processed.
+     */
+    public int bulkUpdateStatusOlderThan(InstructionStatus fromStatus, InstructionStatus toStatus,
+                                         LocalDateTime threshold) {
+        return entityManager.createQuery(
+            "UPDATE SettlementInstruction s SET s.status = :toStatus " +
+            "WHERE s.status = :fromStatus AND s.updatedAt < :threshold"
+        )
+        .setParameter("toStatus", toStatus)
+        .setParameter("fromStatus", fromStatus)
+        .setParameter("threshold", threshold)
+        .executeUpdate();
+    }
+
+    /**
+     * CAS-style conditional status transition. Returns 1 if the update succeeded
+     * (the instruction was in the expected status), 0 otherwise.
+     */
+    public int compareAndSetStatus(String tradeRef, InstructionStatus expectedStatus,
+                                   InstructionStatus newStatus) {
+        return entityManager.createQuery(
+            "UPDATE SettlementInstruction s SET s.status = :newStatus, s.updatedAt = :now " +
+            "WHERE s.tradeRef = :tradeRef AND s.status = :expectedStatus"
+        )
+        .setParameter("newStatus", newStatus)
+        .setParameter("now", LocalDateTime.now())
+        .setParameter("tradeRef", tradeRef)
+        .setParameter("expectedStatus", expectedStatus)
         .executeUpdate();
     }
 }

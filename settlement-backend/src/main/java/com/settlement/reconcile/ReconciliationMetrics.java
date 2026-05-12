@@ -61,6 +61,10 @@ public class ReconciliationMetrics {
         return totalUnknown.get();
     }
 
+    public long getUnmatchedCount() {
+        return totalUnmatched.get();
+    }
+
     public Map<String, Object> snapshot() {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("totalProcessed", totalProcessed.get());

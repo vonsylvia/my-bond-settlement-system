@@ -6,5 +6,6 @@ public enum InstructionStatus {
     SENT,
     MATCHED,
     FAILED,
+    RETRYING,
     CANCELLED
 }

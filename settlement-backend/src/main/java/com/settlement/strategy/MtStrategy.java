@@ -86,7 +86,7 @@ public class MtStrategy implements SwiftMessageStrategy {
     @Override
     public CanonicalStatusAdvice parseStatusReply(String rawPayload) {
         String sanitised = sanitiseSwiftMessage(rawPayload);
-        String tradeRef = extractTradeRefInternal(sanitised, null);
+        String tradeRef = extractTradeRefInternal(sanitised);
         String statusCode = extractRawStatusCode(sanitised);
         StatusOutcome outcome = extractOutcome(sanitised);
 
@@ -99,12 +99,12 @@ public class MtStrategy implements SwiftMessageStrategy {
     }
 
     @Override
-    public String extractTradeRef(String rawPayload, String fallbackCorrelationId) {
+    public String extractTradeRef(String rawPayload) {
         String sanitised = sanitiseSwiftMessage(rawPayload);
-        return extractTradeRefInternal(sanitised, fallbackCorrelationId);
+        return extractTradeRefInternal(sanitised);
     }
 
-    private String extractTradeRefInternal(String sanitised, String fallbackCorrelationId) {
+    private String extractTradeRefInternal(String sanitised) {
         try {
             SwiftMessage swiftMsg = SwiftMessage.parse(sanitised);
             if (swiftMsg != null && swiftMsg.getBlock4() != null) {
@@ -121,11 +121,7 @@ public class MtStrategy implements SwiftMessageStrategy {
         } catch (Exception e) {
             log.debug("Prowide parsing failed, trying raw text extraction", e);
         }
-        String rawRef = extractTradeRefFromRawText(sanitised);
-        if (rawRef != null) {
-            return rawRef;
-        }
-        return fallbackCorrelationId;
+        return extractTradeRefFromRawText(sanitised);
     }
 
     private String extractTradeRefFromRawText(String rawMessage) {

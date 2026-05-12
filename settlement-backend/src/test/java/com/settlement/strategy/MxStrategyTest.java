@@ -153,20 +153,20 @@ class MxStrategyTest {
     @Test
     void extractTradeRef_shouldExtractFromSese024() {
         String xml = buildStatusAdvice("TR-MX-REF123", "matched");
-        String ref = strategy.extractTradeRef(xml, "FALLBACK");
+        String ref = strategy.extractTradeRef(xml);
         assertThat(ref).isEqualTo("TR-MX-REF123");
     }
 
     @Test
-    void extractTradeRef_shouldFallback_forGarbled() {
-        String ref = strategy.extractTradeRef("not xml", "FALLBACK-ID");
-        assertThat(ref).isEqualTo("FALLBACK-ID");
+    void extractTradeRef_shouldReturnNull_forGarbled() {
+        String ref = strategy.extractTradeRef("not xml");
+        assertThat(ref).isNull();
     }
 
     @Test
     void extractTradeRef_shouldExtractViaRegex_whenParserFails() {
         String partialXml = "<something><AcctOwnrTxId>TR-REGEX-001</AcctOwnrTxId></something>";
-        String ref = strategy.extractTradeRef(partialXml, "FALLBACK");
+        String ref = strategy.extractTradeRef(partialXml);
         assertThat(ref).isEqualTo("TR-REGEX-001");
     }
 
