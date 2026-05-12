@@ -100,6 +100,40 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/settlement/{tradeRef}/retry:
+    post:
+      summary: Manually retry a failed settlement instruction
+      description: |
+        Re-submits a FAILED settlement instruction for async processing.
+        Only instructions in FAILED status can be retried.
+      operationId: retrySettlement
+      parameters:
+        - name: tradeRef
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Unique trade reference identifier
+      responses:
+        '202':
+          description: Settlement instruction accepted for retry
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettlementResponse'
+        '404':
+          description: Settlement instruction not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '409':
+          description: Instruction not in a retryable state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /api/holdings:
     get:
       summary: Get bond holdings
@@ -309,6 +343,11 @@ components:
           maxLength: 50
           description: Internal safekeeping account identifier
           example: "ACC-001"
+        preferredStandard:
+          type: string
+          enum: [MT, MX]
+          description: Preferred SWIFT messaging standard (defaults to MT if omitted)
+          example: "MT"
 
     SettlementResponse:
       type: object
@@ -339,7 +378,7 @@ components:
           example: "BUY"
         status:
           type: string
-          enum: [PENDING, SENT, MATCHED, FAILED, CANCELLED]
+          enum: [PENDING, SUBMITTING, SENT, MATCHED, FAILED, RETRYING, CANCELLED]
           example: "SENT"
         accountId:
           type: string
