@@ -62,7 +62,17 @@ public class ReconciliationService implements ReconciliationHandler {
 
         SwiftMessageStrategy strategy = strategyFactory.detectStrategy(rawMessage);
 
-        String tradeRef = strategy.extractTradeRef(rawMessage, correlationId);
+        String tradeRef = strategy.extractTradeRef(rawMessage);
+        if (tradeRef == null || tradeRef.isBlank()) {
+            log.error("Cannot extract tradeRef from inbound {} reply, correlationId={}. " +
+                    "Message requires manual review.", strategy.getInboundStatusType(), correlationId);
+            auditLogDao.save(new AuditLog(correlationId, AuditEventType.RECONCILE_UNMATCHED,
+                    "Failed to extract tradeRef from " + strategy.getInboundStatusType()
+                    + " — message unprocessable, requires manual review"));
+            metrics.recordUnmatched();
+            alertService.sendUnknownStatusAlert(correlationId, null);
+            return;
+        }
 
         Optional<SettlementInstruction> optInstruction = instructionDao.findByTradeRef(tradeRef);
         if (optInstruction.isEmpty()) {

@@ -102,7 +102,7 @@ public class MxStrategy implements SwiftMessageStrategy {
             if (mx == null || mx.getSctiesSttlmTxStsAdvc() == null) {
                 log.warn("Failed to parse sese.024 — null result");
                 return CanonicalStatusAdvice.unknown(
-                        extractTradeRef(rawPayload, null),
+                        extractTradeRef(rawPayload),
                         "Parse returned null");
             }
 
@@ -117,14 +117,14 @@ public class MxStrategy implements SwiftMessageStrategy {
         } catch (Exception e) {
             log.error("Error parsing sese.024.001.10", e);
             return CanonicalStatusAdvice.unknown(
-                    extractTradeRef(rawPayload, null),
+                    extractTradeRef(rawPayload),
                     e.getMessage());
         }
     }
 
     @Override
-    public String extractTradeRef(String rawPayload, String fallbackCorrelationId) {
-        if (rawPayload == null) return fallbackCorrelationId;
+    public String extractTradeRef(String rawPayload) {
+        if (rawPayload == null) return null;
 
         try {
             MxSese02400110 mx = MxSese02400110.parse(rawPayload);
@@ -144,7 +144,7 @@ public class MxStrategy implements SwiftMessageStrategy {
             return m.group(1).strip();
         }
 
-        return fallbackCorrelationId;
+        return null;
     }
 
     private CanonicalStatusAdvice resolveOutcome(
