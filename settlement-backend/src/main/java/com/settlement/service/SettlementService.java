@@ -13,6 +13,8 @@ import com.settlement.exception.ResourceNotFoundException;
 import com.settlement.strategy.CanonicalMapper;
 import com.settlement.strategy.SwiftMessageStrategy;
 import com.settlement.strategy.SwiftMessageStrategyFactory;
+import com.settlement.translation.TranslationResult;
+import com.settlement.translation.TranslationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -35,6 +37,7 @@ public class SettlementService {
     private final SwiftMessageStrategyFactory strategyFactory;
     private final CanonicalMapper canonicalMapper;
     private final AsyncSettlementProcessor asyncProcessor;
+    private final TranslationService translationService;
 
     public SettlementService(SettlementInstructionDao instructionDao,
                              BondHoldingDao holdingDao,
@@ -42,7 +45,8 @@ public class SettlementService {
                              SwiftMessageDao swiftMessageDao,
                              SwiftMessageStrategyFactory strategyFactory,
                              CanonicalMapper canonicalMapper,
-                             AsyncSettlementProcessor asyncProcessor) {
+                             AsyncSettlementProcessor asyncProcessor,
+                             TranslationService translationService) {
         this.instructionDao = instructionDao;
         this.holdingDao = holdingDao;
         this.auditLogDao = auditLogDao;
@@ -50,6 +54,7 @@ public class SettlementService {
         this.strategyFactory = strategyFactory;
         this.canonicalMapper = canonicalMapper;
         this.asyncProcessor = asyncProcessor;
+        this.translationService = translationService;
     }
 
     /**
@@ -84,13 +89,15 @@ public class SettlementService {
         String rawMessage = strategy.buildSettlementInstruction(canonical);
         String messageType = strategy.getOutboundMessageType(canonical);
 
-        SwiftMessage swiftMessage = new SwiftMessage(
+        SwiftMessage primaryMsg = new SwiftMessage(
                 instruction.getId(), tradeRef, standard, messageType,
                 MessageDirection.OUTBOUND, rawMessage);
-        swiftMessageDao.save(swiftMessage);
+        swiftMessageDao.save(primaryMsg);
+
+        storeDualFormatCopy(instruction.getId(), tradeRef, rawMessage);
 
         auditLogDao.save(new AuditLog(tradeRef, AuditEventType.INSTRUCTION_CREATED,
-                "Instruction saved (" + standard + "/" + messageType + "), async XA processing queued. ISIN="
+                "Instruction saved (dual-format: MT+MX), async XA processing queued. ISIN="
                         + request.getIsin() + " QTY=" + request.getQuantity()));
 
         log.info("Settlement instruction created: tradeRef={}, ISIN={}, direction={}, standard={} — async send queued",
@@ -163,6 +170,28 @@ public class SettlementService {
         resp.setQuantity(holding.getQuantity());
         resp.setUpdatedAt(holding.getUpdatedAt());
         return resp;
+    }
+
+    /**
+     * Generates the translated copy (MT→MX or MX→MT) and stores it alongside
+     * the primary message. Failures are logged but do not block settlement.
+     */
+    private void storeDualFormatCopy(Long instructionId, String tradeRef, String primaryPayload) {
+        try {
+            TranslationResult translated = translationService.translate(primaryPayload);
+            SwiftMessage translatedMsg = new SwiftMessage(
+                    instructionId, tradeRef,
+                    translated.targetStandard(), translated.targetMessageType(),
+                    MessageDirection.OUTBOUND, translated.translatedPayload());
+            translatedMsg.setTranslated(true);
+            swiftMessageDao.save(translatedMsg);
+
+            log.debug("Dual-format copy stored: tradeRef={}, translatedTo={}",
+                    tradeRef, translated.targetStandard());
+        } catch (Exception e) {
+            log.warn("Failed to generate dual-format copy for tradeRef={}: {}. " +
+                    "Primary message is unaffected.", tradeRef, e.getMessage());
+        }
     }
 
     private void scheduleAfterCommit(String tradeRef) {

@@ -21,6 +21,12 @@ public interface SwiftMessageStrategy {
     String buildSettlementInstruction(CanonicalSettlement settlement);
 
     /**
+     * Parses an inbound settlement instruction message into Canonical data.
+     * Used by the MT↔MX translation service to round-trip between formats.
+     */
+    CanonicalSettlement parseSettlementInstruction(String rawPayload);
+
+    /**
      * Returns the outbound message type identifier (e.g. "MT541", "sese.023.001.09").
      */
     String getOutboundMessageType(CanonicalSettlement settlement);
@@ -34,6 +40,12 @@ public interface SwiftMessageStrategy {
      * Parses an inbound status reply into a Canonical status advice.
      */
     CanonicalStatusAdvice parseStatusReply(String rawPayload);
+
+    /**
+     * Builds an outbound status reply message from Canonical status advice.
+     * Used by the MT↔MX translation service for inbound reply archival.
+     */
+    String buildStatusReply(CanonicalStatusAdvice statusAdvice);
 
     /**
      * Extracts the trade reference from an inbound reply payload.

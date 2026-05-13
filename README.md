@@ -6,11 +6,13 @@ A complete SWIFT bond settlement system built for IBM WebSphere + Oracle environ
 
 - **Frontend**: Vue.js 3 + Vite + Axios
 - **Backend**: Spring MVC 6 REST API
-- **SWIFT Messaging**: Dual-standard support (MT and MX)
+- **SWIFT Messaging**: Dual-standard support (MT and MX) with automatic MT↔MX translation
   - **MT (FIN)**: Prowide Core — MT541 (send) / MT548 (receive)
   - **MX (ISO 20022)**: Prowide ISO 20022 — sese.023.001.09 (send) / sese.024.001.10 (receive)
+  - **MT↔MX Translation**: Automatic dual-format storage + counterparty-based routing
   - **Strategy Pattern**: `SwiftMessageStrategy` interface with `MtStrategy` / `MxStrategy` implementations
   - **Canonical Data Model**: Format-independent `CanonicalSettlement` / `CanonicalStatusAdvice` decouples business logic from message formats
+  - **Counterparty Routing**: `COUNTERPARTY_CAPABILITY` registry drives send-format selection (MT_ONLY / MX_ONLY / DUAL)
 - **Message Queue**: IBM MQ via JMS
   - **Sending**: Spring JmsTemplate with application-managed MQ client connection
   - **Receiving**: Message-Driven EJB (MDB) via JCA activation spec on IBM MQ Resource Adapter
@@ -303,9 +305,13 @@ SELECT TRADE_REF, STATUS, PREFERRED_STANDARD, ISIN FROM SETTLEMENT_INSTRUCTION O
 SELECT * FROM BOND_HOLDING;
 SELECT TRADE_REF, EVENT_TYPE, DETAIL FROM AUDIT_LOG ORDER BY CREATED_AT DESC;
 
--- SWIFT messages (both MT and MX)
-SELECT TRADE_REF, MESSAGE_STANDARD, MESSAGE_TYPE, DIRECTION, PARSED_STATUS
+-- SWIFT messages (both MT and MX, with translation flag)
+SELECT TRADE_REF, MESSAGE_STANDARD, MESSAGE_TYPE, DIRECTION, IS_TRANSLATED, PARSED_STATUS
 FROM SWIFT_MESSAGE ORDER BY CREATED_AT DESC FETCH FIRST 20 ROWS ONLY;
+
+-- Counterparty capability registry
+SELECT BIC_CODE, PARTICIPANT_NAME, SUPPORTED_STANDARD, PREFERRED_STANDARD, IS_ACTIVE
+FROM COUNTERPARTY_CAPABILITY ORDER BY BIC_CODE;
 
 -- Message type registry
 SELECT MESSAGE_TYPE, MESSAGE_STANDARD, DESCRIPTION, CATEGORY FROM MESSAGE_TYPE_REGISTRY;
@@ -374,7 +380,9 @@ my-bond-settlement-system/
 │       │   ├── MqClientConfig.java          # JNDI JMS ConnectionFactory + JmsTemplate (XA)
 │       │   └── ServiceRegistryInitializer.java  # Registers Spring beans for MDB access
 │       ├── controller/
-│       │   ├── SettlementController.java    # REST API
+│       │   ├── SettlementController.java    # REST API (settlements + messages)
+│       │   ├── CounterpartyController.java  # Counterparty capability CRUD
+│       │   ├── TranslationController.java   # MT↔MX translation API
 │       │   └── MqConnectivityController.java # MQ health & MDB test endpoints (MT + MX)
 │       ├── strategy/                        # MT/MX Strategy Pattern
 │       │   ├── SwiftMessageStrategy.java    # Strategy interface (build + parse)
@@ -382,6 +390,8 @@ my-bond-settlement-system/
 │       │   ├── MxStrategy.java              # sese.023 build / sese.024 parse
 │       │   ├── SwiftMessageStrategyFactory.java # Strategy resolver + auto-detect
 │       │   └── CanonicalMapper.java         # Entity ↔ Canonical mapping
+│       ├── translation/                     # MT↔MX Translation Service
+│       │   └── TranslationService.java      # Canonical-pivot translation (instruction + status)
 │       ├── service/                         # Business logic
 │       ├── jms/SwiftMessageSender.java      # JMS sender (MT/MX agnostic)
 │       ├── reconcile/
@@ -410,8 +420,9 @@ Messages are stored in a dedicated `SWIFT_MESSAGE` table, decoupled from the bus
 | Table | Purpose |
 |-------|---------|
 | `SETTLEMENT_INSTRUCTION` | Business entity — format-agnostic, stores `PREFERRED_STANDARD` (MT/MX) |
-| `SWIFT_MESSAGE` | All outbound/inbound SWIFT messages (MT541, MT548, sese.023, sese.024, etc.) with raw payload |
+| `SWIFT_MESSAGE` | All outbound/inbound SWIFT messages with `IS_TRANSLATED` flag distinguishing originals from auto-translated copies |
 | `MESSAGE_TYPE_REGISTRY` | Metadata registry mapping MT ↔ MX equivalents and categories |
+| `COUNTERPARTY_CAPABILITY` | Counterparty MT/MX routing preferences (SUPPORTED_STANDARD + PREFERRED_STANDARD) |
 
 **Registered message types:**
 
@@ -422,9 +433,9 @@ Messages are stored in a dedicated `SWIFT_MESSAGE` table, decoupled from the bus
 | sese.023.001.09 | MX | SETTLEMENT | MT541 |
 | sese.024.001.10 | MX | STATUS | MT548 |
 
-## Position Management (CSD-Style)
+## Position Management
 
-Bond positions follow the architecture used by large Central Securities Depositories (CSDs like Euroclear, Clearstream, DTCC):
+Bond positions follow the architecture used by large Central Securities Depositories:
 
 | Table | Role | Mutability |
 |-------|------|------------|
@@ -533,14 +544,26 @@ SWIFT Message → Strategy → CanonicalStatusAdvice → Service → Entity
 | `SwiftMessageStrategy` | Interface for building/parsing messages (MT or MX) |
 | `SwiftMessageStrategyFactory` | Resolves strategy by standard; auto-detects from raw payload |
 
-### Outbound (Send MT541 / sese.023)
+### Outbound (Send MT541 / sese.023) — Dual-Format with Counterparty Routing
 
 ```
-SettlementService → CanonicalMapper → Strategy.build() → SWIFT_MESSAGE (DB)
-    → SettlementXaExecutor → JmsTemplate.send(SWIFT.SEND.QUEUE) → SWIFT Gateway
+SettlementService.submitInstruction():
+    → CanonicalMapper → Strategy.build(primaryFormat) → SWIFT_MESSAGE (primary, IS_TRANSLATED=0)
+    → TranslationService.translate(primary) → SWIFT_MESSAGE (translated, IS_TRANSLATED=1)
+    [Both MT and MX versions stored for every instruction]
+
+SettlementXaExecutor.executeSettlement():
+    → CounterpartyCapabilityDao.findByBicFuzzy(bic)
+    → Resolve outbound standard:
+        MT_ONLY → send MT version
+        MX_ONLY → send MX version
+        DUAL    → send counterparty's preferredStandard
+        Unknown → fallback to instruction's preferredStandard
+    → SwiftMessageDao.findLatestOutboundByStandard(resolved)
+    → JmsTemplate.send(SWIFT.SEND.QUEUE) → SWIFT Gateway
 ```
 
-### Inbound (Receive MT548 / sese.024)
+### Inbound (Receive MT548 / sese.024) — Auto-Translation Archive
 
 ```
 SWIFT Gateway → SWIFT.REPLY.QUEUE → JCA Activation Spec (container-managed)
@@ -548,8 +571,37 @@ SWIFT Gateway → SWIFT.REPLY.QUEUE → JCA Activation Spec (container-managed)
     → ServiceRegistry.lookup("reconciliationService")
     → StrategyFactory.detectStrategy(rawMessage)  [auto-detect MT/MX]
     → Strategy.parseStatusReply() → CanonicalStatusAdvice
+    → Save original inbound message (IS_TRANSLATED=0)
+    → TranslationService.translateStatusReply() → Save translated copy (IS_TRANSLATED=1)
     → ReconciliationService updates status + holdings
 ```
+
+### MT↔MX Translation Service
+
+The system includes a standalone translation service that converts between SWIFT FIN (MT) and ISO 20022 (MX) formats using a canonical pivot model:
+
+```
+MT message → MtStrategy.parse() → CanonicalSettlement → MxStrategy.build() → MX message
+MX message → MxStrategy.parse() → CanonicalSettlement → MtStrategy.build() → MT message
+```
+
+| Supported Translations | Source | Target |
+|------------------------|--------|--------|
+| Settlement Instructions | MT541 | sese.023.001.09 |
+| Settlement Instructions | sese.023.001.09 | MT541 |
+| Status Replies | MT548 | sese.024.001.10 |
+| Status Replies | sese.024.001.10 | MT548 |
+
+### Counterparty Capability Registry
+
+During the SWIFT MT→MX migration coexistence period (2025-2027), the system maintains a registry of counterparty messaging capabilities:
+
+| Capability | Behavior |
+|------------|----------|
+| `MT_ONLY` | Always send MT format regardless of instruction preference |
+| `MX_ONLY` | Always send MX format regardless of instruction preference |
+| `DUAL` | Send counterparty's preferred format (MT or MX) |
+| Unknown | Fallback to instruction's own `preferredStandard` (backward compatible) |
 
 ### Cross-Module Bridge
 
@@ -660,10 +712,18 @@ SENT    → (status unchanged)                    (MT548/sese.024 unparseable �
 |--------|------|-------------|
 | `GET` | `/api/holdings` | List all bond holdings (cached balances) |
 | `GET` | `/api/holdings/{accountId}` | Get holdings for account |
-| `POST` | `/api/settlement` | Submit settlement instruction (supports `preferredStandard`: MT/MX) |
+| `POST` | `/api/settlement` | Submit settlement instruction (dual-format: MT+MX stored, routed by counterparty) |
 | `GET` | `/api/settlement/{tradeRef}` | Get instruction status (includes `retryCount`, `failureReason`) |
 | `GET` | `/api/settlement?page=&size=` | List settlement instructions (paginated) |
+| `GET` | `/api/settlement/{tradeRef}/messages` | Get all SWIFT messages (MT+MX, original+translated) for an instruction |
 | `POST` | `/api/settlement/{tradeRef}/retry` | Manual retry for FAILED instructions |
+| `GET` | `/api/counterparty` | List all counterparty capabilities (MT/MX routing preferences) |
+| `GET` | `/api/counterparty/{bicCode}` | Get counterparty capability by BIC |
+| `POST` | `/api/counterparty` | Register a new counterparty capability |
+| `PUT` | `/api/counterparty/{bicCode}` | Update counterparty capability |
+| `DELETE` | `/api/counterparty/{bicCode}` | Deactivate counterparty (soft delete) |
+| `POST` | `/api/translation/translate` | Translate a SWIFT message between MT↔MX |
+| `POST` | `/api/translation/detect` | Detect format/type of a SWIFT message |
 | `POST` | `/api/positions/reconcile` | Incremental reconciliation (only changed positions since last snapshot) |
 | `POST` | `/api/positions/daily-close` | Daily close: full reconciliation + persist snapshot as new baseline |
 | `GET` | `/api/mq/health` | IBM MQ connection health check |

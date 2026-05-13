@@ -59,6 +59,36 @@
             <input id="accountId" v-model="form.accountId" type="text"
                    placeholder="e.g. ACC-001" required />
           </div>
+          <div class="form-group">
+            <label for="preferredStandard">Preferred Standard</label>
+            <select id="preferredStandard" v-model="form.preferredStandard">
+              <option value="MT">MT (FIN)</option>
+              <option value="MX">MX (ISO 20022)</option>
+            </select>
+            <span class="field-hint">Fallback when counterparty capability is unknown</span>
+          </div>
+        </div>
+
+        <div v-if="counterpartyInfo" class="counterparty-badge">
+          <span class="badge-label">Counterparty Capability</span>
+          <div class="badge-content">
+            <span class="badge-name">{{ counterpartyInfo.participantName }}</span>
+            <span class="badge-tag" :class="'tag-' + counterpartyInfo.supportedStandard.toLowerCase()">
+              {{ counterpartyInfo.supportedStandard }}
+            </span>
+            <span class="badge-detail">
+              Resolved outbound: <strong>{{ counterpartyInfo.resolvedOutbound }}</strong>
+            </span>
+          </div>
+        </div>
+        <div v-if="counterpartyNotFound" class="counterparty-badge badge-unknown">
+          <span class="badge-label">Counterparty Capability</span>
+          <div class="badge-content">
+            <span class="badge-name">Not registered</span>
+            <span class="badge-detail">
+              Will use preferred standard (<strong>{{ form.preferredStandard }}</strong>) as fallback
+            </span>
+          </div>
         </div>
 
         <button type="submit" class="btn-submit" :disabled="submitting">
@@ -70,7 +100,7 @@
 </template>
 
 <script>
-import { createSettlement } from '../api/settlement.js'
+import { createSettlement, getCounterpartyByBic } from '../api/settlement.js'
 
 export default {
   name: 'SettlementForm',
@@ -83,14 +113,40 @@ export default {
         settlementDate: '',
         counterparty: '',
         bicCode: '',
-        accountId: ''
+        accountId: '',
+        preferredStandard: 'MT'
       },
       submitting: false,
       successMsg: '',
-      errorMsg: ''
+      errorMsg: '',
+      counterpartyInfo: null,
+      counterpartyNotFound: false,
+      bicLookupTimer: null
+    }
+  },
+  watch: {
+    'form.bicCode'(newVal) {
+      this.counterpartyInfo = null
+      this.counterpartyNotFound = false
+      if (this.bicLookupTimer) clearTimeout(this.bicLookupTimer)
+
+      const bic = (newVal || '').trim().toUpperCase()
+      if (bic.length >= 8) {
+        this.bicLookupTimer = setTimeout(() => this.lookupCounterparty(bic), 400)
+      }
     }
   },
   methods: {
+    async lookupCounterparty(bic) {
+      try {
+        const response = await getCounterpartyByBic(bic)
+        this.counterpartyInfo = response.data
+        this.counterpartyNotFound = false
+      } catch {
+        this.counterpartyInfo = null
+        this.counterpartyNotFound = true
+      }
+    },
     async handleSubmit() {
       this.submitting = true
       this.successMsg = ''
@@ -123,8 +179,11 @@ export default {
         settlementDate: '',
         counterparty: '',
         bicCode: '',
-        accountId: ''
+        accountId: '',
+        preferredStandard: 'MT'
       }
+      this.counterpartyInfo = null
+      this.counterpartyNotFound = false
     }
   }
 }
@@ -232,5 +291,71 @@ export default {
 .btn-submit:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.field-hint {
+  font-size: 0.75rem;
+  color: #888;
+  margin-top: 0.25rem;
+}
+
+.counterparty-badge {
+  background: #e8f5e9;
+  border: 1px solid #c8e6c9;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.counterparty-badge.badge-unknown {
+  background: #fff3e0;
+  border-color: #ffe0b2;
+}
+
+.badge-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.badge-content {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.badge-name {
+  font-weight: 500;
+  color: #333;
+}
+
+.badge-tag {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #fff;
+}
+
+.tag-dual {
+  background: #3f51b5;
+}
+
+.tag-mt_only {
+  background: #ff9800;
+}
+
+.tag-mx_only {
+  background: #4caf50;
+}
+
+.badge-detail {
+  font-size: 0.85rem;
+  color: #555;
 }
 </style>

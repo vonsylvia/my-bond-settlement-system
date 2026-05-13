@@ -1,7 +1,9 @@
 package com.settlement.controller;
 
+import com.settlement.dao.SwiftMessageDao;
 import com.settlement.dto.*;
 import com.settlement.entity.SettlementInstruction;
+import com.settlement.entity.SwiftMessage;
 import com.settlement.reconcile.PositionReconciliationService;
 import com.settlement.service.SettlementService;
 import jakarta.validation.Valid;
@@ -17,11 +19,14 @@ public class SettlementController {
 
     private final SettlementService settlementService;
     private final PositionReconciliationService positionReconciliationService;
+    private final SwiftMessageDao swiftMessageDao;
 
     public SettlementController(SettlementService settlementService,
-                                PositionReconciliationService positionReconciliationService) {
+                                PositionReconciliationService positionReconciliationService,
+                                SwiftMessageDao swiftMessageDao) {
         this.settlementService = settlementService;
         this.positionReconciliationService = positionReconciliationService;
+        this.swiftMessageDao = swiftMessageDao;
     }
 
     @PostMapping("/settlement")
@@ -61,6 +66,14 @@ public class SettlementController {
         return ResponseEntity.ok(holdings);
     }
 
+    @GetMapping("/settlement/{tradeRef}/messages")
+    public ResponseEntity<List<SwiftMessageResponse>> getMessages(@PathVariable String tradeRef) {
+        List<SwiftMessage> messages = swiftMessageDao.findByTradeRef(tradeRef);
+        List<SwiftMessageResponse> response = messages.stream()
+                .map(this::toMessageResponse).toList();
+        return ResponseEntity.ok(response);
+    }
+
     @PostMapping("/positions/reconcile")
     public ResponseEntity<ReconciliationResult> reconcilePositions() {
         ReconciliationResult result = positionReconciliationService.reconcile();
@@ -71,6 +84,21 @@ public class SettlementController {
     public ResponseEntity<ReconciliationResult> dailyClose() {
         ReconciliationResult result = positionReconciliationService.dailyClose();
         return ResponseEntity.ok(result);
+    }
+
+    private SwiftMessageResponse toMessageResponse(SwiftMessage msg) {
+        SwiftMessageResponse r = new SwiftMessageResponse();
+        r.setId(msg.getId());
+        r.setMessageStandard(msg.getMessageStandard().name());
+        r.setMessageType(msg.getMessageType());
+        r.setDirection(msg.getDirection().name());
+        r.setRawPayload(msg.getRawPayload());
+        r.setTranslated(msg.isTranslated());
+        r.setParsedStatus(msg.getParsedStatus());
+        r.setParsedReason(msg.getParsedReason());
+        r.setSequenceNo(msg.getSequenceNo());
+        r.setCreatedAt(msg.getCreatedAt());
+        return r;
     }
 
     private SettlementResponse toResponse(SettlementInstruction instruction) {

@@ -11,6 +11,7 @@ import com.settlement.exception.GlobalExceptionHandler;
 import com.settlement.exception.ResourceNotFoundException;
 import com.settlement.dto.PositionDiscrepancy;
 import com.settlement.dto.ReconciliationResult;
+import com.settlement.dao.SwiftMessageDao;
 import com.settlement.reconcile.PositionReconciliationService;
 import com.settlement.service.SettlementService;
 import org.junit.jupiter.api.BeforeEach;
@@ -43,6 +44,9 @@ class SettlementControllerTest {
 
     @Mock
     private PositionReconciliationService positionReconciliationService;
+
+    @Mock
+    private SwiftMessageDao swiftMessageDao;
 
     @InjectMocks
     private SettlementController controller;

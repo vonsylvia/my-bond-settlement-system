@@ -1,6 +1,7 @@
 package com.settlement.dao;
 
 import com.settlement.entity.MessageDirection;
+import com.settlement.entity.MessageStandard;
 import com.settlement.entity.SwiftMessage;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
@@ -55,6 +56,25 @@ public class SwiftMessageDao {
         );
         query.setParameter("tradeRef", tradeRef);
         return query.getResultList();
+    }
+
+    /**
+     * Finds the latest outbound message for a given instruction and message standard.
+     * Used by counterparty-routing to select the correct format (MT or MX) to send.
+     */
+    public Optional<SwiftMessage> findLatestOutboundByStandard(Long instructionId, MessageStandard standard) {
+        TypedQuery<SwiftMessage> query = entityManager.createQuery(
+            "SELECT m FROM SwiftMessage m WHERE m.instructionId = :instructionId " +
+            "AND m.messageStandard = :standard AND m.direction = :direction " +
+            "ORDER BY m.sequenceNo DESC, m.createdAt DESC",
+            SwiftMessage.class
+        );
+        query.setParameter("instructionId", instructionId);
+        query.setParameter("standard", standard);
+        query.setParameter("direction", MessageDirection.OUTBOUND);
+        query.setMaxResults(1);
+        List<SwiftMessage> results = query.getResultList();
+        return results.isEmpty() ? Optional.empty() : Optional.of(results.getFirst());
     }
 
     public int nextSequenceNo(Long instructionId, String messageType, MessageDirection direction) {

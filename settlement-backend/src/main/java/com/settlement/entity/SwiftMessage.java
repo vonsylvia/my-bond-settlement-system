@@ -47,6 +47,9 @@ public class SwiftMessage {
     @Column(name = "SEQUENCE_NO", nullable = false)
     private int sequenceNo = 1;
 
+    @Column(name = "IS_TRANSLATED", nullable = false)
+    private boolean translated = false;
+
     @Column(name = "CREATED_AT", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
@@ -103,6 +106,9 @@ public class SwiftMessage {
 
     public int getSequenceNo() { return sequenceNo; }
     public void setSequenceNo(int sequenceNo) { this.sequenceNo = sequenceNo; }
+
+    public boolean isTranslated() { return translated; }
+    public void setTranslated(boolean translated) { this.translated = translated; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
 }

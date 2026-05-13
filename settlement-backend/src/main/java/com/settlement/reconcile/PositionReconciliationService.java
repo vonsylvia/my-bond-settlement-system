@@ -21,7 +21,7 @@ import java.time.LocalDateTime;
 import java.util.*;
 
 /**
- * CSD-style position reconciliation.
+ * Position reconciliation.
  *
  * <p>The authoritative position lives in {@code BondHolding} and is updated
  * transactionally on each settlement. The {@code SecurityMovement} table is

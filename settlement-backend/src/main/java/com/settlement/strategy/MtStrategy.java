@@ -8,12 +8,17 @@ import com.prowidesoftware.swift.model.mt.mt5xx.MT541;
 import com.settlement.canonical.CanonicalSettlement;
 import com.settlement.canonical.CanonicalStatusAdvice;
 import com.settlement.canonical.CanonicalStatusAdvice.StatusOutcome;
+import com.settlement.canonical.PartyInfo;
+import com.settlement.canonical.PaymentType;
+import com.settlement.canonical.SettlementDirection;
 import com.settlement.entity.MessageStandard;
 import com.settlement.swift.SwiftConst;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -81,6 +86,159 @@ public class MtStrategy implements SwiftMessageStrategy {
     @Override
     public String getInboundStatusType() {
         return "MT548";
+    }
+
+    @Override
+    public String buildStatusReply(CanonicalStatusAdvice statusAdvice) {
+        String statusCode = resolveStatusCode(statusAdvice);
+        String tradeRef = statusAdvice.transactionId() != null
+                ? statusAdvice.transactionId() : "UNKNOWN";
+
+        return "{1:F01TESTBIC0AXXX0000000000}" +
+                "{2:O5481200000000TESTBIC0AXXX00000000000000000000N}" +
+                "{4:\r\n" +
+                ":16R:GENL\r\n" +
+                ":20C::SEME//" + tradeRef + "\r\n" +
+                ":23G:INST\r\n" +
+                ":16S:GENL\r\n" +
+                ":16R:STAT\r\n" +
+                ":25D::MTCH//" + statusCode + "\r\n" +
+                ":16S:STAT\r\n" +
+                "-}";
+    }
+
+    private String resolveStatusCode(CanonicalStatusAdvice advice) {
+        if (advice.statusCode() != null && !advice.statusCode().isBlank()) {
+            return switch (advice.statusCode()) {
+                case "MTCHD", "ACKD" -> SwiftConst.MATC;
+                case "UMTCHD" -> SwiftConst.NMAT;
+                case "RJCTD" -> SwiftConst.REJT;
+                case "CANC" -> SwiftConst.CANC;
+                case "PDNG" -> "PEND";
+                default -> advice.statusCode();
+            };
+        }
+        return switch (advice.outcome()) {
+            case MATCHED -> SwiftConst.MATC;
+            case FAILED -> SwiftConst.NMAT;
+            case PENDING -> "PEND";
+            case UNKNOWN -> "UNKN";
+        };
+    }
+
+    @Override
+    public CanonicalSettlement parseSettlementInstruction(String rawPayload) {
+        String sanitised = sanitiseSwiftMessage(rawPayload);
+
+        try {
+            SwiftMessage swiftMsg = SwiftMessage.parse(sanitised);
+            if (swiftMsg == null || swiftMsg.getBlock4() == null) {
+                throw new IllegalArgumentException("Cannot parse MT message — null or missing Block4");
+            }
+            SwiftTagListBlock b4 = swiftMsg.getBlock4();
+
+            String tradeRef = extractField20CReference(b4);
+            if (tradeRef == null) {
+                throw new IllegalArgumentException("Missing :20C::SEME trade reference");
+            }
+
+            LocalDate settlementDate = extractField98ADate(b4);
+            String isin = extractIsin(b4);
+            BigDecimal quantity = extractField36BQuantity(b4);
+
+            String counterpartyBic = extractField95PBic(b4);
+            if (counterpartyBic != null) {
+                counterpartyBic = stripBicPadding(counterpartyBic);
+            }
+
+            String safekeepingAccount = extractField97AAccount(b4);
+
+            String senderBic = (swiftMsg.getBlock1() != null)
+                    ? stripBicPadding(swiftMsg.getBlock1().getLogicalTerminal())
+                    : "UNKNOWN";
+
+            return new CanonicalSettlement(
+                    tradeRef, isin, settlementDate, quantity,
+                    SettlementDirection.RECEIVE,
+                    PaymentType.AGAINST_PAYMENT,
+                    PartyInfo.ofBic(senderBic),
+                    PartyInfo.ofBic(counterpartyBic != null ? counterpartyBic : "UNKNOWN"),
+                    safekeepingAccount,
+                    null, null, null);
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Failed to parse MT settlement instruction: " + e.getMessage(), e);
+        }
+    }
+
+    private String extractField20CReference(SwiftTagListBlock b4) {
+        Tag tag = b4.getTagByName(SwiftConst.TAG_20C);
+        if (tag == null) return null;
+        Field20C field = new Field20C(tag.getValue());
+        String ref = field.getComponent(2);
+        return (ref != null && !ref.isBlank()) ? ref : null;
+    }
+
+    private LocalDate extractField98ADate(SwiftTagListBlock b4) {
+        Tag tag = b4.getTagByName(SwiftConst.TAG_98A);
+        if (tag == null) return null;
+        Field98A field = new Field98A(tag.getValue());
+        String dateStr = field.getComponent(2);
+        if (dateStr != null && !dateStr.isBlank()) {
+            return LocalDate.parse(dateStr, SWIFT_DATE_FORMAT);
+        }
+        return null;
+    }
+
+    private BigDecimal extractField36BQuantity(SwiftTagListBlock b4) {
+        Tag tag = b4.getTagByName(SwiftConst.TAG_36B);
+        if (tag == null) return null;
+        Field36B field = new Field36B(tag.getValue());
+        String qty = field.getComponent(3);
+        if (qty != null && !qty.isBlank()) {
+            return new BigDecimal(qty.replace(",", "."));
+        }
+        return null;
+    }
+
+    private String extractField95PBic(SwiftTagListBlock b4) {
+        Tag tag = b4.getTagByName(SwiftConst.TAG_95P);
+        if (tag == null) return null;
+        Field95P field = new Field95P(tag.getValue());
+        String bic = field.getComponent(2);
+        return (bic != null && !bic.isBlank()) ? bic : null;
+    }
+
+    private String extractField97AAccount(SwiftTagListBlock b4) {
+        Tag tag = b4.getTagByName(SwiftConst.TAG_97A);
+        if (tag == null) return null;
+        Field97A field = new Field97A(tag.getValue());
+        String account = field.getComponent(2);
+        return (account != null && !account.isBlank()) ? account : null;
+    }
+
+    private String extractIsin(SwiftTagListBlock b4) {
+        Tag tag35B = b4.getTagByName(SwiftConst.TAG_35B);
+        if (tag35B == null) return null;
+        String val = tag35B.getValue();
+        if (val != null && val.toUpperCase().startsWith("ISIN ")) {
+            String isin = val.substring(5).strip();
+            int nlPos = isin.indexOf('\n');
+            if (nlPos > 0) isin = isin.substring(0, nlPos).strip();
+            int crPos = isin.indexOf('\r');
+            if (crPos > 0) isin = isin.substring(0, crPos).strip();
+            return isin;
+        }
+        return val;
+    }
+
+    private String stripBicPadding(String bic) {
+        if (bic == null) return null;
+        if (bic.length() == 11 && bic.endsWith("XXX")) {
+            return bic.substring(0, 8);
+        }
+        return bic;
     }
 
     @Override

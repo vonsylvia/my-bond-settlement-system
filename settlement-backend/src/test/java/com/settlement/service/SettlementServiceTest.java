@@ -16,6 +16,7 @@ import com.settlement.strategy.CanonicalMapper;
 import com.settlement.strategy.MtStrategy;
 import com.settlement.strategy.SwiftMessageStrategy;
 import com.settlement.strategy.SwiftMessageStrategyFactory;
+import com.settlement.translation.TranslationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -58,6 +59,9 @@ class SettlementServiceTest {
     private AsyncSettlementProcessor asyncProcessor;
 
     @Mock
+    private TranslationService translationService;
+
+    @Mock
     private SwiftMessageStrategy mtStrategy;
 
     private SettlementService settlementService;
@@ -68,7 +72,7 @@ class SettlementServiceTest {
     void setUp() {
         settlementService = new SettlementService(
                 instructionDao, holdingDao, auditLogDao, swiftMessageDao,
-                strategyFactory, canonicalMapper, asyncProcessor);
+                strategyFactory, canonicalMapper, asyncProcessor, translationService);
 
         validRequest = new SettlementRequest();
         validRequest.setIsin("US0378331005");
@@ -110,7 +114,7 @@ class SettlementServiceTest {
         assertThat(result.getPreferredStandard()).isEqualTo(MessageStandard.MT);
 
         verify(instructionDao).save(any(SettlementInstruction.class));
-        verify(swiftMessageDao).save(any(SwiftMessage.class));
+        verify(swiftMessageDao, atLeastOnce()).save(any(SwiftMessage.class));
         verify(auditLogDao).save(any());
     }
 
@@ -129,12 +133,12 @@ class SettlementServiceTest {
         settlementService.submitInstruction(validRequest);
 
         ArgumentCaptor<SwiftMessage> msgCaptor = ArgumentCaptor.forClass(SwiftMessage.class);
-        verify(swiftMessageDao).save(msgCaptor.capture());
-        SwiftMessage savedMsg = msgCaptor.getValue();
-        assertThat(savedMsg.getRawPayload()).isEqualTo("{MT541 content}");
-        assertThat(savedMsg.getMessageType()).isEqualTo("MT541");
-        assertThat(savedMsg.getMessageStandard()).isEqualTo(MessageStandard.MT);
-        assertThat(savedMsg.getDirection()).isEqualTo(MessageDirection.OUTBOUND);
+        verify(swiftMessageDao, atLeastOnce()).save(msgCaptor.capture());
+        SwiftMessage primaryMsg = msgCaptor.getAllValues().getFirst();
+        assertThat(primaryMsg.getRawPayload()).isEqualTo("{MT541 content}");
+        assertThat(primaryMsg.getMessageType()).isEqualTo("MT541");
+        assertThat(primaryMsg.getMessageStandard()).isEqualTo(MessageStandard.MT);
+        assertThat(primaryMsg.getDirection()).isEqualTo(MessageDirection.OUTBOUND);
     }
 
     @Test
@@ -229,5 +233,66 @@ class SettlementServiceTest {
 
         assertThatThrownBy(() -> settlementService.manualRetry("TR-NONE"))
                 .isInstanceOf(ResourceNotFoundException.class);
+    }
+
+    @Test
+    void submitInstruction_shouldStoreDualFormatWhenTranslationSucceeds() {
+        com.settlement.translation.TranslationResult translationResult =
+                new com.settlement.translation.TranslationResult(
+                        MessageStandard.MT, MessageStandard.MX,
+                        "MT541", "sese.023.001.09",
+                        "<translated-xml/>",
+                        new CanonicalSettlement("TR-DUAL", "US0378331005",
+                                LocalDate.of(2026, 5, 15), new BigDecimal("1000000.00"),
+                                SettlementDirection.RECEIVE, PaymentType.AGAINST_PAYMENT,
+                                PartyInfo.ofBic("OWNRBICXXX"), PartyInfo.ofBic("GOLDUS33XXX"),
+                                "ACC-001", null, null, null));
+
+        when(strategyFactory.getStrategy(MessageStandard.MT)).thenReturn(mtStrategy);
+        when(mtStrategy.buildSettlementInstruction(any())).thenReturn("{MT541 content}");
+        when(mtStrategy.getOutboundMessageType(any())).thenReturn("MT541");
+        when(instructionDao.save(any())).thenAnswer(inv -> {
+            SettlementInstruction si = inv.getArgument(0);
+            si.setId(1L);
+            return si;
+        });
+        when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(translationService.translate("{MT541 content}")).thenReturn(translationResult);
+
+        settlementService.submitInstruction(validRequest);
+
+        ArgumentCaptor<SwiftMessage> msgCaptor = ArgumentCaptor.forClass(SwiftMessage.class);
+        verify(swiftMessageDao, times(2)).save(msgCaptor.capture());
+
+        SwiftMessage primary = msgCaptor.getAllValues().get(0);
+        assertThat(primary.getMessageStandard()).isEqualTo(MessageStandard.MT);
+        assertThat(primary.isTranslated()).isFalse();
+
+        SwiftMessage translated = msgCaptor.getAllValues().get(1);
+        assertThat(translated.getMessageStandard()).isEqualTo(MessageStandard.MX);
+        assertThat(translated.getMessageType()).isEqualTo("sese.023.001.09");
+        assertThat(translated.isTranslated()).isTrue();
+        assertThat(translated.getRawPayload()).isEqualTo("<translated-xml/>");
+    }
+
+    @Test
+    void submitInstruction_shouldNotFailWhenTranslationFails() {
+        when(strategyFactory.getStrategy(MessageStandard.MT)).thenReturn(mtStrategy);
+        when(mtStrategy.buildSettlementInstruction(any())).thenReturn("{MT541 content}");
+        when(mtStrategy.getOutboundMessageType(any())).thenReturn("MT541");
+        when(instructionDao.save(any())).thenAnswer(inv -> {
+            SettlementInstruction si = inv.getArgument(0);
+            si.setId(1L);
+            return si;
+        });
+        when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        when(translationService.translate("{MT541 content}"))
+                .thenThrow(new IllegalArgumentException("Parse failed"));
+
+        SettlementInstruction result = settlementService.submitInstruction(validRequest);
+
+        assertThat(result).isNotNull();
+        assertThat(result.getStatus()).isEqualTo(InstructionStatus.PENDING);
+        verify(swiftMessageDao, times(1)).save(any(SwiftMessage.class));
     }
 }
