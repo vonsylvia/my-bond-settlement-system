@@ -11,6 +11,7 @@ import com.settlement.entity.*;
 import com.settlement.service.AlertWebhookService;
 import com.settlement.strategy.SwiftMessageStrategy;
 import com.settlement.strategy.SwiftMessageStrategyFactory;
+import com.settlement.translation.TranslationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -39,6 +40,7 @@ public class ReconciliationService implements ReconciliationHandler {
     private final ReconciliationMetrics metrics;
     private final AlertWebhookService alertService;
     private final SwiftMessageStrategyFactory strategyFactory;
+    private final TranslationService translationService;
 
     public ReconciliationService(SettlementInstructionDao instructionDao,
                                  BondHoldingDao holdingDao,
@@ -47,7 +49,8 @@ public class ReconciliationService implements ReconciliationHandler {
                                  SwiftMessageDao swiftMessageDao,
                                  ReconciliationMetrics metrics,
                                  AlertWebhookService alertService,
-                                 SwiftMessageStrategyFactory strategyFactory) {
+                                 SwiftMessageStrategyFactory strategyFactory,
+                                 TranslationService translationService) {
         this.instructionDao = instructionDao;
         this.holdingDao = holdingDao;
         this.movementDao = movementDao;
@@ -56,6 +59,7 @@ public class ReconciliationService implements ReconciliationHandler {
         this.metrics = metrics;
         this.alertService = alertService;
         this.strategyFactory = strategyFactory;
+        this.translationService = translationService;
     }
 
     @Transactional
@@ -109,6 +113,8 @@ public class ReconciliationService implements ReconciliationHandler {
         inboundMsg.setParsedStatus(statusAdvice.statusCode());
         inboundMsg.setParsedReason(statusAdvice.reasonText());
         swiftMessageDao.save(inboundMsg);
+
+        storeTranslatedStatusCopy(instruction.getId(), tradeRef, rawMessage, strategy.getStandard());
 
         switch (statusAdvice.outcome()) {
             case MATCHED -> handleMatched(instruction);
@@ -234,7 +240,7 @@ public class ReconciliationService implements ReconciliationHandler {
 
     /**
      * Only instructions that have been sent (or already matched for idempotent re-processing)
-     * are eligible to receive CSD status replies. Instructions in PENDING, SUBMITTING,
+     * are eligible to receive replies. Instructions in PENDING, SUBMITTING,
      * RETRYING, or CANCELLED states should not be processing inbound messages.
      */
     private static boolean isEligibleForStatusUpdate(SettlementInstruction instruction) {
@@ -242,5 +248,34 @@ public class ReconciliationService implements ReconciliationHandler {
             case SENT, MATCHED, FAILED -> true;
             case PENDING, SUBMITTING, RETRYING, CANCELLED -> false;
         };
+    }
+
+    /**
+     * Translates the inbound status reply to the opposite format and stores the
+     * translated copy for dual-format audit completeness.
+     */
+    private void storeTranslatedStatusCopy(Long instructionId, String tradeRef,
+                                           String rawMessage, MessageStandard sourceStandard) {
+        try {
+            TranslationService.StatusTranslationResult translated =
+                    translationService.translateStatusReply(rawMessage);
+
+            SwiftMessage translatedMsg = new SwiftMessage(
+                    instructionId, tradeRef,
+                    translated.targetStandard(), translated.targetMessageType(),
+                    MessageDirection.INBOUND, translated.translatedPayload());
+            translatedMsg.setTranslated(true);
+            translatedMsg.setParsedStatus(
+                    translated.canonical().statusCode());
+            translatedMsg.setParsedReason(
+                    translated.canonical().reasonText());
+            swiftMessageDao.save(translatedMsg);
+
+            log.debug("Inbound status translated copy stored: tradeRef={}, {} → {}",
+                    tradeRef, sourceStandard, translated.targetStandard());
+        } catch (Exception e) {
+            log.warn("Failed to translate inbound status for tradeRef={}: {}. " +
+                    "Original message is unaffected.", tradeRef, e.getMessage());
+        }
     }
 }

@@ -206,6 +206,193 @@ paths:
                 consistent: true
                 discrepancies: []
 
+  /api/translation/translate:
+    post:
+      summary: Translate a SWIFT message between MT and MX formats
+      description: |
+        Accepts a raw SWIFT FIN (MT) or ISO 20022 (MX) message and translates it to the
+        opposite format. Uses the canonical pivot model: detect source → parse to canonical →
+        build target format. If targetStandard is omitted, auto-detects and translates to
+        the opposite standard (MT→MX or MX→MT).
+      operationId: translateMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TranslationRequest'
+            example:
+              rawPayload: "{1:F01OWNRBICXXXX0000000000}{2:O5411200260515GOLDUS33XXX00000000002605150000N}{4:\r\n:20C::SEME//TR-EXAMPLE-001\r\n:23G:NEWM\r\n:98A::SETT//20260515\r\n:35B:ISIN US0378331005\r\n:36B::SETT//UNIT/1000000.00\r\n:95P::DEAG//GOLDUS33XXX\r\n:97A::SAFE//ACC-001\r\n-}"
+              targetStandard: "MX"
+      responses:
+        '200':
+          description: Translation result with source/target metadata and canonical summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TranslationResponse'
+        '400':
+          description: Validation error (blank payload, same standard, unparseable message)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/translation/detect:
+    post:
+      summary: Detect the format and type of a SWIFT message
+      description: |
+        Lightweight endpoint that identifies the message standard (MT or MX),
+        message type (e.g. MT541, sese.023.001.09), and trade reference
+        without performing a full translation.
+      operationId: detectMessage
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TranslationRequest'
+      responses:
+        '200':
+          description: Detected format information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DetectionResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/settlement/{tradeRef}/messages:
+    get:
+      summary: Get SWIFT messages for a settlement instruction
+      description: |
+        Returns all SWIFT messages (outbound and inbound, both original and translated copies)
+        associated with a given trade reference. Messages are ordered by creation time.
+      operationId: getMessages
+      parameters:
+        - name: tradeRef
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Trade reference identifier
+      responses:
+        '200':
+          description: List of SWIFT messages for the instruction
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SwiftMessageResponse'
+
+  /api/counterparty:
+    get:
+      summary: List all active counterparty capabilities
+      description: Returns all registered counterparties with their MT/MX routing preferences
+      operationId: listCounterparties
+      responses:
+        '200':
+          description: List of counterparty capabilities
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CounterpartyCapabilityResponse'
+
+    post:
+      summary: Register a new counterparty capability
+      operationId: createCounterparty
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CounterpartyCapabilityRequest'
+            example:
+              bicCode: "HSBCHKHHXXX"
+              participantName: "HSBC Hong Kong"
+              supportedStandard: "DUAL"
+              preferredStandard: "MX"
+      responses:
+        '201':
+          description: Counterparty registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CounterpartyCapabilityResponse'
+        '400':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /api/counterparty/{bicCode}:
+    get:
+      summary: Get counterparty capability by BIC
+      operationId: getCounterparty
+      parameters:
+        - name: bicCode
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Counterparty capability details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CounterpartyCapabilityResponse'
+        '404':
+          description: Counterparty not found
+
+    put:
+      summary: Update counterparty capability
+      operationId: updateCounterparty
+      parameters:
+        - name: bicCode
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CounterpartyCapabilityRequest'
+      responses:
+        '200':
+          description: Counterparty updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CounterpartyCapabilityResponse'
+        '404':
+          description: Counterparty not found
+
+    delete:
+      summary: Deactivate a counterparty (soft delete)
+      operationId: deactivateCounterparty
+      parameters:
+        - name: bicCode
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Counterparty deactivated
+        '404':
+          description: Counterparty not found
+
   /api/mq/health:
     get:
       summary: IBM MQ connection health check
@@ -503,7 +690,7 @@ components:
         totalPending:
           type: integer
           format: int64
-          description: Settlement still pending at CSD
+          description: Settlement still pending
         totalUnknown:
           type: integer
           format: int64
@@ -630,6 +817,190 @@ components:
           type: number
           description: cachedBalance minus ledgerBalance
           example: 100000.00
+
+    TranslationRequest:
+      type: object
+      required:
+        - rawPayload
+      properties:
+        rawPayload:
+          type: string
+          description: Raw SWIFT FIN (MT) or ISO 20022 XML (MX) message payload
+        targetStandard:
+          type: string
+          enum: [MT, MX]
+          description: Target standard to translate to. If omitted, auto-translates to the opposite standard.
+
+    TranslationResponse:
+      type: object
+      properties:
+        sourceStandard:
+          type: string
+          enum: [MT, MX]
+          description: Detected source message standard
+          example: "MT"
+        targetStandard:
+          type: string
+          enum: [MT, MX]
+          description: Target message standard
+          example: "MX"
+        sourceMessageType:
+          type: string
+          description: Source message type identifier
+          example: "MT541"
+        targetMessageType:
+          type: string
+          description: Target message type identifier
+          example: "sese.023.001.09"
+        translatedPayload:
+          type: string
+          description: The translated message in the target format
+        canonical:
+          $ref: '#/components/schemas/CanonicalSummary'
+
+    CanonicalSummary:
+      type: object
+      description: Summary of canonical settlement data extracted during translation
+      properties:
+        transactionId:
+          type: string
+          example: "TR-EXAMPLE-001"
+        isin:
+          type: string
+          example: "US0378331005"
+        settlementDate:
+          type: string
+          format: date
+          example: "2026-05-15"
+        quantity:
+          type: number
+          example: 1000000.00
+        direction:
+          type: string
+          enum: [RECEIVE, DELIVER]
+          example: "RECEIVE"
+        counterpartyBic:
+          type: string
+          example: "GOLDUS33"
+        safekeepingAccount:
+          type: string
+          example: "ACC-001"
+
+    DetectionResponse:
+      type: object
+      properties:
+        standard:
+          type: string
+          enum: [MT, MX]
+          description: Detected message standard
+          example: "MT"
+        messageType:
+          type: string
+          description: Detected message type
+          example: "MT541"
+        tradeRef:
+          type: string
+          description: Extracted trade reference
+          example: "TR-EXAMPLE-001"
+
+    SwiftMessageResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        messageStandard:
+          type: string
+          enum: [MT, MX]
+          description: Message standard (MT for FIN, MX for ISO 20022)
+        messageType:
+          type: string
+          description: Message type (e.g. MT541, sese.023.001.09)
+        direction:
+          type: string
+          enum: [OUTBOUND, INBOUND]
+        rawPayload:
+          type: string
+          description: Raw message content (FIN text or XML)
+        translated:
+          type: boolean
+          description: True if this is an auto-generated translation copy (not the primary message)
+        parsedStatus:
+          type: string
+          nullable: true
+          description: Parsed status code from inbound replies
+        parsedReason:
+          type: string
+          nullable: true
+        sequenceNo:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+
+    CounterpartyCapabilityRequest:
+      type: object
+      required:
+        - bicCode
+        - participantName
+        - supportedStandard
+        - preferredStandard
+      properties:
+        bicCode:
+          type: string
+          minLength: 8
+          maxLength: 11
+          description: BIC/SWIFT code of the counterparty
+          example: "HSBCHKHHXXX"
+        participantName:
+          type: string
+          maxLength: 100
+          description: Human-readable counterparty name
+          example: "HSBC Hong Kong"
+        supportedStandard:
+          type: string
+          enum: [MT_ONLY, MX_ONLY, DUAL]
+          description: |
+            Which standards the counterparty can process:
+            - MT_ONLY: only accepts SWIFT FIN messages
+            - MX_ONLY: only accepts ISO 20022 XML
+            - DUAL: accepts both formats
+          example: "DUAL"
+        preferredStandard:
+          type: string
+          enum: [MT, MX]
+          description: Preferred standard when counterparty supports DUAL
+          example: "MX"
+
+    CounterpartyCapabilityResponse:
+      type: object
+      properties:
+        bicCode:
+          type: string
+          example: "HSBCHKHHXXX"
+        participantName:
+          type: string
+          example: "HSBC Hong Kong"
+        supportedStandard:
+          type: string
+          enum: [MT_ONLY, MX_ONLY, DUAL]
+          example: "DUAL"
+        preferredStandard:
+          type: string
+          enum: [MT, MX]
+          example: "MX"
+        resolvedOutbound:
+          type: string
+          enum: [MT, MX]
+          description: The actual format that will be sent to this counterparty (resolved from supported + preferred)
+          example: "MX"
+        effectiveDate:
+          type: string
+          format: date
+          example: "2026-05-13"
+        active:
+          type: boolean
+          example: true
 
     ErrorResponse:
       type: object

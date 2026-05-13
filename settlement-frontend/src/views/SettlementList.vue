@@ -38,7 +38,13 @@
               <StatusBadge :status="item.status" />
             </td>
             <td>{{ formatDate(item.createdAt) }}</td>
-            <td>
+            <td class="actions-cell">
+              <router-link
+                :to="{ name: 'Messages', params: { tradeRef: item.tradeRef } }"
+                class="btn-messages"
+              >
+                Messages
+              </router-link>
               <button
                 v-if="item.status === 'FAILED'"
                 class="btn-retry"
@@ -47,7 +53,6 @@
               >
                 {{ retryingRef === item.tradeRef ? 'Retrying...' : 'Retry' }}
               </button>
-              <span v-else class="no-action">—</span>
             </td>
           </tr>
           <tr v-if="instructions.length === 0">
@@ -285,5 +290,28 @@ export default {
 
 .no-action {
   color: #bbb;
+}
+
+.actions-cell {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.btn-messages {
+  padding: 0.3rem 0.7rem;
+  background: #e8eaf6;
+  color: #3f51b5;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 0.2s;
+}
+
+.btn-messages:hover {
+  background: #c5cae9;
 }
 </style>

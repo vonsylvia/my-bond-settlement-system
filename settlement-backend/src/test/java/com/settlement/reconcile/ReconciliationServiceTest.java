@@ -9,6 +9,7 @@ import com.settlement.entity.*;
 import com.settlement.service.AlertWebhookService;
 import com.settlement.strategy.MtStrategy;
 import com.settlement.strategy.SwiftMessageStrategyFactory;
+import com.settlement.translation.TranslationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -83,9 +84,10 @@ class ReconciliationServiceTest {
         metrics = new ReconciliationMetrics();
         MtStrategy mtStrategy = new MtStrategy();
         SwiftMessageStrategyFactory factory = new SwiftMessageStrategyFactory(List.of(mtStrategy));
+        TranslationService translationService = new TranslationService(factory);
         reconciliationService = new ReconciliationService(
                 instructionDao, holdingDao, movementDao, auditLogDao,
-                swiftMessageDao, metrics, alertService, factory);
+                swiftMessageDao, metrics, alertService, factory, translationService);
 
         sampleInstruction = new SettlementInstruction();
         sampleInstruction.setId(1L);

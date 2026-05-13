@@ -63,7 +63,7 @@ public final class SwiftConst {
 
     // ── Matching / settlement status codes (:25D: component 2) ──
 
-    /** Matched (by CSD / depository) */
+    /** Matched (by depository) */
     public static final String MATC = "MATC";
     /** Matching Confirmed */
     public static final String MACH = "MACH";

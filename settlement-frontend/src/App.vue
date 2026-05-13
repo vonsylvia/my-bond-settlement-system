@@ -8,6 +8,7 @@
         <router-link to="/settlement/new" class="nav-link">New Instruction</router-link>
         <router-link to="/settlement/list" class="nav-link">Instructions</router-link>
         <router-link to="/holdings" class="nav-link">Holdings</router-link>
+        <router-link to="/counterparty" class="nav-link">Counterparties</router-link>
       </div>
     </nav>
     <main class="content">

@@ -27,3 +27,27 @@ export function getHoldings(accountId) {
   const params = accountId ? { accountId } : {}
   return api.get('/holdings', { params })
 }
+
+export function getMessages(tradeRef) {
+  return api.get(`/settlement/${tradeRef}/messages`)
+}
+
+export function getCounterpartyByBic(bicCode) {
+  return api.get(`/counterparty/${bicCode}`)
+}
+
+export function listCounterparties() {
+  return api.get('/counterparty')
+}
+
+export function createCounterparty(data) {
+  return api.post('/counterparty', data)
+}
+
+export function updateCounterparty(bicCode, data) {
+  return api.put(`/counterparty/${bicCode}`, data)
+}
+
+export function deleteCounterparty(bicCode) {
+  return api.delete(`/counterparty/${bicCode}`)
+}

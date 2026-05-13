@@ -1,6 +1,7 @@
 package com.settlement.service;
 
 import com.settlement.dao.AuditLogDao;
+import com.settlement.dao.CounterpartyCapabilityDao;
 import com.settlement.dao.SettlementInstructionDao;
 import com.settlement.dao.SwiftMessageDao;
 import com.settlement.canonical.CanonicalSettlement;
@@ -17,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Handles transactional (XA) operations for settlement processing.
@@ -34,19 +36,22 @@ public class SettlementXaExecutor {
     private final SwiftMessageSender messageSender;
     private final SwiftMessageStrategyFactory strategyFactory;
     private final CanonicalMapper canonicalMapper;
+    private final CounterpartyCapabilityDao counterpartyCapabilityDao;
 
     public SettlementXaExecutor(SettlementInstructionDao instructionDao,
                                 AuditLogDao auditLogDao,
                                 SwiftMessageDao swiftMessageDao,
                                 SwiftMessageSender messageSender,
                                 SwiftMessageStrategyFactory strategyFactory,
-                                CanonicalMapper canonicalMapper) {
+                                CanonicalMapper canonicalMapper,
+                                CounterpartyCapabilityDao counterpartyCapabilityDao) {
         this.instructionDao = instructionDao;
         this.auditLogDao = auditLogDao;
         this.swiftMessageDao = swiftMessageDao;
         this.messageSender = messageSender;
         this.strategyFactory = strategyFactory;
         this.canonicalMapper = canonicalMapper;
+        this.counterpartyCapabilityDao = counterpartyCapabilityDao;
     }
 
     /**
@@ -92,17 +97,21 @@ public class SettlementXaExecutor {
 
         instruction.setStatus(InstructionStatus.SUBMITTING);
 
-        SwiftMessageStrategy strategy = strategyFactory.getStrategy(instruction.getPreferredStandard());
-        CanonicalSettlement canonical = canonicalMapper.toCanonical(instruction);
-        String outboundType = strategy.getOutboundMessageType(canonical);
+        MessageStandard sendStandard = resolveOutboundStandard(instruction);
 
         SwiftMessage outbound = swiftMessageDao
-                .findLatestOutbound(instruction.getId(), outboundType)
-                .orElseThrow(() -> new NonRetryableSettlementException(
-                        "No outbound " + outboundType + " message found for tradeRef=" + tradeRef));
+                .findLatestOutboundByStandard(instruction.getId(), sendStandard)
+                .orElseGet(() -> {
+                    SwiftMessageStrategy fallbackStrategy = strategyFactory.getStrategy(instruction.getPreferredStandard());
+                    CanonicalSettlement c = canonicalMapper.toCanonical(instruction);
+                    String fallbackType = fallbackStrategy.getOutboundMessageType(c);
+                    return swiftMessageDao.findLatestOutbound(instruction.getId(), fallbackType)
+                            .orElseThrow(() -> new NonRetryableSettlementException(
+                                    "No outbound message found for tradeRef=" + tradeRef));
+                });
 
         messageSender.sendSwiftMessage(tradeRef, outbound.getRawPayload(),
-                outboundType, instruction.getPreferredStandard());
+                outbound.getMessageType(), outbound.getMessageStandard());
 
         instruction.setStatus(InstructionStatus.SENT);
         instruction.setFailureReason(null);
@@ -110,9 +119,11 @@ public class SettlementXaExecutor {
         instructionDao.save(instruction);
 
         auditLogDao.save(new AuditLog(tradeRef, AuditEventType.INSTRUCTION_SENT,
-                outboundType + " sent via async XA"));
+                outbound.getMessageType() + " (" + outbound.getMessageStandard()
+                + ") sent via async XA — routed by counterparty capability"));
 
-        log.info("Async settlement completed: tradeRef={}, messageType={}", tradeRef, outboundType);
+        log.info("Async settlement completed: tradeRef={}, messageType={}, standard={}",
+                tradeRef, outbound.getMessageType(), outbound.getMessageStandard());
     }
 
     @Transactional
@@ -132,6 +143,26 @@ public class SettlementXaExecutor {
         String detail = String.format("Async XA failed (attempt %d/%d): %s",
                 attempt, maxRetryCount, reason);
         auditLogDao.save(new AuditLog(tradeRef, eventType, detail));
+    }
+
+    /**
+     * Determines the outbound standard based on counterparty capability registry.
+     * Falls back to the instruction's preferred standard if no registration exists.
+     */
+    private MessageStandard resolveOutboundStandard(SettlementInstruction instruction) {
+        Optional<CounterpartyCapability> capability =
+                counterpartyCapabilityDao.findByBicFuzzy(instruction.getBicCode());
+
+        if (capability.isPresent()) {
+            MessageStandard resolved = capability.get().resolveOutboundStandard();
+            log.debug("Counterparty routing: bic={}, capability={}, resolved={}",
+                    instruction.getBicCode(), capability.get().getSupportedStandard(), resolved);
+            return resolved;
+        }
+
+        log.debug("No counterparty capability found for bic={}, falling back to preferredStandard={}",
+                instruction.getBicCode(), instruction.getPreferredStandard());
+        return instruction.getPreferredStandard();
     }
 
     private static final long ORPHAN_THRESHOLD_MINUTES = 5;
