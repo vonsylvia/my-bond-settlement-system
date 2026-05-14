@@ -48,13 +48,43 @@ public class MatchingInstructionDao {
         return query.getResultList();
     }
 
+    public List<MatchingInstruction> findAll(int page, int size) {
+        return entityManager.createQuery(
+            "SELECT m FROM MatchingInstruction m ORDER BY m.id DESC",
+            MatchingInstruction.class
+        ).setFirstResult(page * size).setMaxResults(size).getResultList();
+    }
+
+    public long countAll() {
+        return entityManager.createQuery(
+            "SELECT COUNT(m) FROM MatchingInstruction m", Long.class
+        ).getSingleResult();
+    }
+
     public List<MatchingInstruction> findByStatus(MatchingStatus status) {
+        return entityManager.createQuery(
+            "SELECT m FROM MatchingInstruction m WHERE m.matchingStatus = :status ORDER BY m.id DESC",
+            MatchingInstruction.class
+        ).setParameter("status", status).getResultList();
+    }
+
+    public List<MatchingInstruction> findByStatus(MatchingStatus status, int page, int size) {
         TypedQuery<MatchingInstruction> query = entityManager.createQuery(
-            "SELECT m FROM MatchingInstruction m WHERE m.matchingStatus = :status ORDER BY m.createdAt",
+            "SELECT m FROM MatchingInstruction m WHERE m.matchingStatus = :status ORDER BY m.id DESC",
             MatchingInstruction.class
         );
         query.setParameter("status", status);
+        query.setFirstResult(page * size);
+        query.setMaxResults(size);
         return query.getResultList();
+    }
+
+    public long countByStatus(MatchingStatus status) {
+        TypedQuery<Long> query = entityManager.createQuery(
+            "SELECT COUNT(m) FROM MatchingInstruction m WHERE m.matchingStatus = :status", Long.class
+        );
+        query.setParameter("status", status);
+        return query.getSingleResult();
     }
 
     public List<MatchingInstruction> findByTradeRef(String tradeRef) {

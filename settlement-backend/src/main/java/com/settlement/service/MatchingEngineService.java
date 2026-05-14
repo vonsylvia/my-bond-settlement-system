@@ -2,6 +2,7 @@ package com.settlement.service;
 
 import com.settlement.dao.AuditLogDao;
 import com.settlement.dao.MatchingInstructionDao;
+import com.settlement.dto.PageResponse;
 import com.settlement.entity.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -149,6 +150,20 @@ public class MatchingEngineService {
                 });
             }
         });
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<MatchingInstruction> listInstructions(MatchingStatus status, int page, int size) {
+        List<MatchingInstruction> content;
+        long total;
+        if (status != null) {
+            content = matchingDao.findByStatus(status, page, size);
+            total = matchingDao.countByStatus(status);
+        } else {
+            content = matchingDao.findAll(page, size);
+            total = matchingDao.countAll();
+        }
+        return new PageResponse<>(content, page, size, total);
     }
 
     @Transactional(readOnly = true)

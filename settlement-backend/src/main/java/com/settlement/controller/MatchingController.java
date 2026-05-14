@@ -1,6 +1,6 @@
 package com.settlement.controller;
 
-import com.settlement.dao.MatchingInstructionDao;
+import com.settlement.dto.PageResponse;
 import com.settlement.entity.MatchingInstruction;
 import com.settlement.entity.MatchingStatus;
 import com.settlement.service.MatchingEngineService;
@@ -22,11 +22,9 @@ import java.util.Map;
 public class MatchingController {
 
     private final MatchingEngineService matchingService;
-    private final MatchingInstructionDao matchingDao;
 
-    public MatchingController(MatchingEngineService matchingService, MatchingInstructionDao matchingDao) {
+    public MatchingController(MatchingEngineService matchingService) {
         this.matchingService = matchingService;
-        this.matchingDao = matchingDao;
     }
 
     @PostMapping
@@ -49,20 +47,12 @@ public class MatchingController {
     }
 
     @GetMapping
-    public ResponseEntity<List<MatchingInstruction>> listAll(@RequestParam(required = false) String status) {
-        List<MatchingInstruction> results;
-        if (status != null) {
-            results = matchingDao.findByStatus(MatchingStatus.valueOf(status));
-        } else {
-            List<MatchingInstruction> unmatched = matchingDao.findByStatus(MatchingStatus.UNMATCHED);
-            List<MatchingInstruction> alleged = matchingDao.findByStatus(MatchingStatus.ALLEGED);
-            List<MatchingInstruction> matched = matchingDao.findByStatus(MatchingStatus.MATCHED);
-            results = new java.util.ArrayList<>();
-            results.addAll(unmatched);
-            results.addAll(alleged);
-            results.addAll(matched);
-        }
-        return ResponseEntity.ok(results);
+    public ResponseEntity<PageResponse<MatchingInstruction>> listAll(
+            @RequestParam(required = false) String status,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        MatchingStatus matchingStatus = (status != null) ? MatchingStatus.valueOf(status) : null;
+        return ResponseEntity.ok(matchingService.listInstructions(matchingStatus, page, size));
     }
 
     @GetMapping("/alleged")

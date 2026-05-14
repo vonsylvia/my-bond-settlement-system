@@ -14,7 +14,7 @@
 
     <div v-if="tab === 'list'" class="table-section">
       <div class="filter-bar">
-        <select v-model="statusFilter" @change="loadInstructions">
+        <select v-model="statusFilter" @change="page = 0; loadInstructions()">
           <option value="">All Statuses</option>
           <option value="UNMATCHED">Unmatched</option>
           <option value="ALLEGED">Alleged</option>
@@ -74,6 +74,12 @@
           </tr>
         </tbody>
       </table>
+
+      <div v-if="totalPages > 1" class="pagination">
+        <button :disabled="page === 0" @click="page--; loadInstructions()">Previous</button>
+        <span>Page {{ page + 1 }} of {{ totalPages }}</span>
+        <button :disabled="page >= totalPages - 1" @click="page++; loadInstructions()">Next</button>
+      </div>
     </div>
 
     <div v-if="tab === 'submit'" class="form-section">
@@ -157,6 +163,8 @@ export default {
       statusFilter: '',
       instructions: [],
       idToRefMap: {},
+      page: 0,
+      totalPages: 0,
       submitting: false,
       submitResult: null,
       form: {
@@ -178,9 +186,11 @@ export default {
   methods: {
     async loadInstructions() {
       try {
-        const params = this.statusFilter ? { status: this.statusFilter } : {}
+        const params = { page: this.page, size: 20 }
+        if (this.statusFilter) params.status = this.statusFilter
         const response = await matchingApi.list(params)
-        this.instructions = response.data
+        this.instructions = response.data.content
+        this.totalPages = response.data.totalPages
         this.idToRefMap = {}
         for (const item of this.instructions) {
           this.idToRefMap[item.id] = item.tradeRef
@@ -195,6 +205,7 @@ export default {
       try {
         const response = await matchingApi.submit(this.form)
         const status = response.data.matchingStatus
+        this.page = 0
         await this.loadInstructions()
         const matchedRef = this.resolveMatchedRef(response.data.matchedWithId)
         this.submitResult = {
@@ -345,6 +356,25 @@ export default {
 .btn-retry:hover { background: #bbdefb; }
 .btn-cancel { background: #fbe9e7; color: #c62828; }
 .btn-cancel:hover { background: #ffccbc; }
+
+.pagination {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+.pagination button {
+  padding: 0.4rem 0.8rem;
+  border: 1px solid #ddd;
+  background: #fff;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.pagination button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 .matching-form {
   background: #fff;
