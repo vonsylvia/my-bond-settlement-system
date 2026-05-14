@@ -80,7 +80,11 @@ public class MtStrategy implements SwiftMessageStrategy {
 
     @Override
     public String getOutboundMessageType(CanonicalSettlement settlement) {
-        return "MT541";
+        if (settlement.direction() == SettlementDirection.RECEIVE) {
+            return (settlement.paymentType() == PaymentType.FREE_OF_PAYMENT) ? "MT540" : "MT541";
+        } else {
+            return (settlement.paymentType() == PaymentType.AGAINST_PAYMENT) ? "MT542" : "MT543";
+        }
     }
 
     @Override
@@ -157,10 +161,24 @@ public class MtStrategy implements SwiftMessageStrategy {
                     ? stripBicPadding(swiftMsg.getBlock1().getLogicalTerminal())
                     : "UNKNOWN";
 
+            SettlementDirection direction = SettlementDirection.RECEIVE;
+            PaymentType paymentType = PaymentType.AGAINST_PAYMENT;
+
+            String msgType = swiftMsg.getType();
+            if (msgType != null) {
+                switch (msgType) {
+                    case "540" -> { direction = SettlementDirection.RECEIVE; paymentType = PaymentType.FREE_OF_PAYMENT; }
+                    case "541" -> { direction = SettlementDirection.RECEIVE; paymentType = PaymentType.AGAINST_PAYMENT; }
+                    case "542" -> { direction = SettlementDirection.DELIVER; paymentType = PaymentType.AGAINST_PAYMENT; }
+                    case "543" -> { direction = SettlementDirection.DELIVER; paymentType = PaymentType.FREE_OF_PAYMENT; }
+                    default -> {} // keep defaults
+                }
+            }
+
             return new CanonicalSettlement(
                     tradeRef, isin, settlementDate, quantity,
-                    SettlementDirection.RECEIVE,
-                    PaymentType.AGAINST_PAYMENT,
+                    direction,
+                    paymentType,
                     PartyInfo.ofBic(senderBic),
                     PartyInfo.ofBic(counterpartyBic != null ? counterpartyBic : "UNKNOWN"),
                     safekeepingAccount,

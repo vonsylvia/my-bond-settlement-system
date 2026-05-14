@@ -1,5 +1,6 @@
 package com.settlement.dto;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -17,6 +18,13 @@ public class SettlementResponse {
     private String accountId;
     private int retryCount;
     private String failureReason;
+    private String currency;
+    private BigDecimal settlementAmount;
+    private String paymentType;
+    private String preferredStandard;
+    private LocalDateTime finalityTimestamp;
+    @JsonProperty("isFinal")
+    private boolean isFinal;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
@@ -123,4 +131,22 @@ public class SettlementResponse {
     public void setUpdatedAt(LocalDateTime updatedAt) {
         this.updatedAt = updatedAt;
     }
+
+    public String getCurrency() { return currency; }
+    public void setCurrency(String currency) { this.currency = currency; }
+
+    public BigDecimal getSettlementAmount() { return settlementAmount; }
+    public void setSettlementAmount(BigDecimal settlementAmount) { this.settlementAmount = settlementAmount; }
+
+    public String getPaymentType() { return paymentType; }
+    public void setPaymentType(String paymentType) { this.paymentType = paymentType; }
+
+    public String getPreferredStandard() { return preferredStandard; }
+    public void setPreferredStandard(String preferredStandard) { this.preferredStandard = preferredStandard; }
+
+    public LocalDateTime getFinalityTimestamp() { return finalityTimestamp; }
+    public void setFinalityTimestamp(LocalDateTime finalityTimestamp) { this.finalityTimestamp = finalityTimestamp; }
+
+    public boolean isFinal() { return isFinal; }
+    public void setFinal(boolean isFinal) { this.isFinal = isFinal; }
 }

@@ -7,6 +7,7 @@ import com.settlement.dao.SwiftMessageDao;
 import com.settlement.dto.HoldingResponse;
 import com.settlement.dto.SettlementRequest;
 import com.settlement.canonical.CanonicalSettlement;
+import com.settlement.canonical.PaymentType;
 import com.settlement.entity.*;
 import com.settlement.exception.BusinessException;
 import com.settlement.exception.ResourceNotFoundException;
@@ -66,9 +67,16 @@ public class SettlementService {
     public SettlementInstruction submitInstruction(SettlementRequest request) {
         String tradeRef = generateTradeRef();
 
-        MessageStandard standard = request.getPreferredStandard() != null
+        MessageStandard standard = (request.getPreferredStandard() != null
+                && !request.getPreferredStandard().isBlank())
                 ? MessageStandard.valueOf(request.getPreferredStandard())
                 : MessageStandard.MT;
+
+        String currency = (request.getCurrency() != null && !request.getCurrency().isBlank())
+                ? request.getCurrency() : "HKD";
+
+        String paymentType = (request.getPaymentType() != null && !request.getPaymentType().isBlank())
+                ? request.getPaymentType() : PaymentType.AGAINST_PAYMENT.name();
 
         SettlementInstruction instruction = new SettlementInstruction();
         instruction.setTradeRef(tradeRef);
@@ -81,6 +89,9 @@ public class SettlementService {
         instruction.setAccountId(request.getAccountId());
         instruction.setStatus(InstructionStatus.PENDING);
         instruction.setPreferredStandard(standard);
+        instruction.setCurrency(currency);
+        instruction.setPaymentType(paymentType);
+        instruction.setSettlementAmount(request.getSettlementAmount());
 
         instructionDao.save(instruction);
 
@@ -120,6 +131,11 @@ public class SettlementService {
         SettlementInstruction instruction = instructionDao.findByTradeRef(tradeRef)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Settlement instruction not found: " + tradeRef));
+
+        if (instruction.isFinal()) {
+            throw new BusinessException(
+                    "Cannot modify finalized instruction: " + tradeRef);
+        }
 
         if (instruction.getStatus() != InstructionStatus.FAILED) {
             throw new BusinessException(

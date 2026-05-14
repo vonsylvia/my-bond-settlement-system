@@ -2,7 +2,11 @@
   <div class="list-container">
     <div class="list-card">
       <div class="list-header">
-        <h2>Settlement Instructions</h2>
+        <div>
+          <h2>Settlement Monitor <span class="phase-tag exec">Execution</span></h2>
+          <p class="header-subtitle">Track settlement instructions through the SWIFT network lifecycle (PENDING → SENT → MATCHED).
+            Instructions here represent actual settlement execution — securities and cash movement via DVP or FOP.</p>
+        </div>
         <button class="btn-refresh" @click="loadData">Refresh</button>
       </div>
 
@@ -15,6 +19,7 @@
             <th>ISIN</th>
             <th>Direction</th>
             <th>Quantity</th>
+            <th>CCY</th>
             <th>Counterparty</th>
             <th>Settlement Date</th>
             <th>Status</th>
@@ -32,10 +37,13 @@
               </span>
             </td>
             <td class="number">{{ formatNumber(item.quantity) }}</td>
+            <td>
+              <span class="currency-badge">{{ item.currency || 'HKD' }}</span>
+            </td>
             <td>{{ item.counterparty }}</td>
             <td>{{ formatSettlementDate(item.settlementDate) }}</td>
             <td>
-              <StatusBadge :status="item.status" />
+              <StatusBadge :status="item.status" :is-final="item.isFinal" />
             </td>
             <td>{{ formatDate(item.createdAt) }}</td>
             <td class="actions-cell">
@@ -56,7 +64,7 @@
             </td>
           </tr>
           <tr v-if="instructions.length === 0">
-            <td colspan="9" class="empty">No settlement instructions found</td>
+            <td colspan="10" class="empty">No settlement instructions found</td>
           </tr>
         </tbody>
       </table>
@@ -234,6 +242,17 @@ export default {
   color: #c62828;
 }
 
+.currency-badge {
+  display: inline-block;
+  padding: 0.15rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  background: #f3e5f5;
+  color: #6a1b9a;
+  letter-spacing: 0.3px;
+}
+
 .empty {
   text-align: center;
   color: #999;
@@ -314,4 +333,24 @@ export default {
 .btn-messages:hover {
   background: #c5cae9;
 }
+
+.header-subtitle {
+  font-size: 0.82rem;
+  color: #666;
+  margin-top: 0.3rem;
+  line-height: 1.4;
+}
+
+.phase-tag {
+  font-size: 0.6rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  vertical-align: middle;
+  margin-left: 0.5rem;
+}
+.phase-tag.pre { background: #e8eaf6; color: #3949ab; }
+.phase-tag.exec { background: #e0f2f1; color: #00695c; }
 </style>

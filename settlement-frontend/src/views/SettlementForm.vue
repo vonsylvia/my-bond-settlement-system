@@ -1,8 +1,10 @@
 <template>
   <div class="form-container">
     <div class="form-card">
-      <h2>New Settlement Instruction</h2>
-      <p class="subtitle">Submit a bond settlement instruction to SWIFT network</p>
+      <h2>SWIFT Direct <span class="phase-tag exec">Execution</span></h2>
+      <p class="subtitle">Submit a settlement instruction directly to the SWIFT network — bypasses internal matching.
+        Use for cross-CSD instructions, FOP transfers, corporate actions, or manual overrides.
+        For standard bilateral settlement, use <router-link to="/matching">Trade Matching</router-link> first.</p>
 
       <div v-if="successMsg" class="alert alert-success">
         {{ successMsg }}
@@ -60,6 +62,34 @@
                    placeholder="e.g. ACC-001" required />
           </div>
           <div class="form-group">
+            <label for="currency">Currency</label>
+            <select id="currency" v-model="form.currency">
+              <option value="HKD">HKD</option>
+              <option value="USD">USD</option>
+              <option value="EUR">EUR</option>
+              <option value="CNY">CNY</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="settlementAmount">Settlement Amount</label>
+            <input id="settlementAmount" v-model.number="form.settlementAmount" type="number"
+                   step="0.01" min="0" placeholder="Cash amount (optional for FOP)" />
+            <span class="field-hint">Required for Against Payment (DVP) settlements</span>
+          </div>
+          <div class="form-group">
+            <label for="paymentType">Payment Type</label>
+            <select id="paymentType" v-model="form.paymentType">
+              <option value="AGAINST_PAYMENT">Against Payment (DVP)</option>
+              <option value="FREE_OF_PAYMENT">Free of Payment (FOP)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
             <label for="preferredStandard">Preferred Standard</label>
             <select id="preferredStandard" v-model="form.preferredStandard">
               <option value="MT">MT (FIN)</option>
@@ -67,6 +97,7 @@
             </select>
             <span class="field-hint">Fallback when counterparty capability is unknown</span>
           </div>
+          <div class="form-group"></div>
         </div>
 
         <div v-if="counterpartyInfo" class="counterparty-badge">
@@ -114,7 +145,10 @@ export default {
         counterparty: '',
         bicCode: '',
         accountId: '',
-        preferredStandard: 'MT'
+        preferredStandard: 'MT',
+        currency: 'HKD',
+        settlementAmount: null,
+        paymentType: 'AGAINST_PAYMENT'
       },
       submitting: false,
       successMsg: '',
@@ -180,7 +214,10 @@ export default {
         counterparty: '',
         bicCode: '',
         accountId: '',
-        preferredStandard: 'MT'
+        preferredStandard: 'MT',
+        currency: 'HKD',
+        settlementAmount: null,
+        paymentType: 'AGAINST_PAYMENT'
       }
       this.counterpartyInfo = null
       this.counterpartyNotFound = false
@@ -358,4 +395,17 @@ export default {
   font-size: 0.85rem;
   color: #555;
 }
+
+.phase-tag {
+  font-size: 0.6rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+  vertical-align: middle;
+  margin-left: 0.5rem;
+}
+.phase-tag.pre { background: #e8eaf6; color: #3949ab; }
+.phase-tag.exec { background: #e0f2f1; color: #00695c; }
 </style>

@@ -10,7 +10,6 @@ import com.settlement.exception.ResourceNotFoundException;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -26,7 +25,6 @@ public class CounterpartyController {
     }
 
     @GetMapping
-    @Transactional(readOnly = true)
     public ResponseEntity<List<CounterpartyCapabilityResponse>> listAll() {
         List<CounterpartyCapability> all = capabilityDao.findAll();
         List<CounterpartyCapabilityResponse> response = all.stream()
@@ -35,7 +33,6 @@ public class CounterpartyController {
     }
 
     @GetMapping("/{bicCode}")
-    @Transactional(readOnly = true)
     public ResponseEntity<CounterpartyCapabilityResponse> getByBic(@PathVariable String bicCode) {
         CounterpartyCapability cap = capabilityDao.findByBic(bicCode)
                 .or(() -> capabilityDao.findByBicFuzzy(bicCode))
@@ -45,7 +42,6 @@ public class CounterpartyController {
     }
 
     @PostMapping
-    @Transactional
     public ResponseEntity<CounterpartyCapabilityResponse> create(
             @Valid @RequestBody CounterpartyCapabilityRequest request) {
         CounterpartyCapability entity = fromRequest(request);
@@ -54,7 +50,6 @@ public class CounterpartyController {
     }
 
     @PutMapping("/{bicCode}")
-    @Transactional
     public ResponseEntity<CounterpartyCapabilityResponse> update(
             @PathVariable String bicCode,
             @Valid @RequestBody CounterpartyCapabilityRequest request) {
@@ -70,7 +65,6 @@ public class CounterpartyController {
     }
 
     @DeleteMapping("/{bicCode}")
-    @Transactional
     public ResponseEntity<Void> deactivate(@PathVariable String bicCode) {
         CounterpartyCapability existing = capabilityDao.findByBic(bicCode)
                 .orElseThrow(() -> new ResourceNotFoundException(

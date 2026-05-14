@@ -5,10 +5,24 @@
         <h1>Bond Settlement System</h1>
       </div>
       <div class="navbar-links">
-        <router-link to="/settlement/new" class="nav-link">New Instruction</router-link>
-        <router-link to="/settlement/list" class="nav-link">Instructions</router-link>
-        <router-link to="/holdings" class="nav-link">Holdings</router-link>
-        <router-link to="/counterparty" class="nav-link">Counterparties</router-link>
+        <div class="nav-group">
+          <span class="nav-group-label">Pre-Settlement</span>
+          <router-link to="/matching" class="nav-link">Trade Matching</router-link>
+        </div>
+        <div class="nav-divider"></div>
+        <div class="nav-group">
+          <span class="nav-group-label">Settlement</span>
+          <router-link to="/settlement/new" class="nav-link">SWIFT Direct</router-link>
+          <router-link to="/settlement/list" class="nav-link">Monitor</router-link>
+          <router-link to="/dvp" class="nav-link">DVP</router-link>
+          <router-link to="/partial-settlement" class="nav-link">Partial</router-link>
+        </div>
+        <div class="nav-divider"></div>
+        <div class="nav-group">
+          <span class="nav-group-label">Reference</span>
+          <router-link to="/holdings" class="nav-link">Holdings</router-link>
+          <router-link to="/counterparty" class="nav-link">Counterparties</router-link>
+        </div>
       </div>
     </nav>
     <main class="content">
@@ -58,7 +72,30 @@ body {
 
 .navbar-links {
   display: flex;
-  gap: 0.5rem;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.nav-group {
+  display: flex;
+  align-items: center;
+  gap: 0.15rem;
+}
+
+.nav-group-label {
+  color: rgba(255, 255, 255, 0.45);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0 0.35rem;
+  font-weight: 600;
+}
+
+.nav-divider {
+  width: 1px;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.2);
+  margin: 0 0.35rem;
 }
 
 .nav-link {

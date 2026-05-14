@@ -1,5 +1,8 @@
 <template>
-  <span :class="['status-badge', statusClass]">{{ status }}</span>
+  <span :class="['status-badge', statusClass]">
+    {{ status }}
+    <span v-if="isFinal" class="finality-mark" title="Settlement finalized — immutable">F</span>
+  </span>
 </template>
 
 <script>
@@ -9,6 +12,10 @@ export default {
     status: {
       type: String,
       required: true
+    },
+    isFinal: {
+      type: Boolean,
+      default: false
     }
   },
   computed: {
@@ -21,6 +28,8 @@ export default {
         case 'FAILED': return 'failed'
         case 'RETRYING': return 'retrying'
         case 'CANCELLED': return 'cancelled'
+        case 'DVP_LOCKED': return 'dvp-locked'
+        case 'PARTIALLY_SETTLED': return 'partial'
         default: return 'pending'
       }
     }
@@ -30,7 +39,9 @@ export default {
 
 <style scoped>
 .status-badge {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
   padding: 0.25rem 0.6rem;
   border-radius: 12px;
   font-size: 0.75rem;
@@ -72,5 +83,28 @@ export default {
 .status-badge.cancelled {
   background: #f5f5f5;
   color: #757575;
+}
+
+.status-badge.dvp-locked {
+  background: #ede7f6;
+  color: #4527a0;
+}
+
+.status-badge.partial {
+  background: #e0f2f1;
+  color: #00695c;
+}
+
+.finality-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #2e7d32;
+  color: #fff;
+  font-size: 0.55rem;
+  font-weight: 800;
 }
 </style>

@@ -5,7 +5,6 @@ import com.settlement.dao.SettlementInstructionDao;
 import com.settlement.dao.SwiftMessageDao;
 import com.settlement.entity.*;
 import com.settlement.jms.SwiftMessageSender;
-import com.settlement.strategy.SwiftMessageStrategyFactory;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;

@@ -148,11 +148,15 @@ public class ReconciliationService implements ReconciliationHandler {
         }
 
         instruction.setStatus(InstructionStatus.MATCHED);
+        instruction.setFinalityTimestamp(java.time.LocalDateTime.now());
+        instruction.setFinal(true);
         auditLogDao.save(new AuditLog(instruction.getTradeRef(), AuditEventType.SETTLEMENT_MATCHED,
                 "Settlement confirmed: ISIN=" + instruction.getIsin() +
                 " QTY=" + instruction.getQuantity() +
                 " DIR=" + instruction.getDirection()));
-        log.info("Settlement MATCHED: tradeRef={}", instruction.getTradeRef());
+        auditLogDao.save(new AuditLog(instruction.getTradeRef(), AuditEventType.SETTLEMENT_FINALIZED,
+                "Settlement finality achieved — instruction is now immutable"));
+        log.info("Settlement MATCHED with finality: tradeRef={}", instruction.getTradeRef());
         metrics.recordMatched();
     }
 
@@ -244,9 +248,12 @@ public class ReconciliationService implements ReconciliationHandler {
      * RETRYING, or CANCELLED states should not be processing inbound messages.
      */
     private static boolean isEligibleForStatusUpdate(SettlementInstruction instruction) {
+        if (instruction.isFinal()) {
+            return false;
+        }
         return switch (instruction.getStatus()) {
-            case SENT, MATCHED, FAILED -> true;
-            case PENDING, SUBMITTING, RETRYING, CANCELLED -> false;
+            case SENT, MATCHED, FAILED, DVP_LOCKED -> true;
+            case PENDING, SUBMITTING, RETRYING, CANCELLED, PARTIALLY_SETTLED -> false;
         };
     }
 

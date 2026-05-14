@@ -13,7 +13,6 @@ import com.settlement.entity.*;
 import com.settlement.exception.BusinessException;
 import com.settlement.exception.ResourceNotFoundException;
 import com.settlement.strategy.CanonicalMapper;
-import com.settlement.strategy.MtStrategy;
 import com.settlement.strategy.SwiftMessageStrategy;
 import com.settlement.strategy.SwiftMessageStrategyFactory;
 import com.settlement.translation.TranslationService;

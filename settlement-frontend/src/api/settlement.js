@@ -51,3 +51,71 @@ export function updateCounterparty(bicCode, data) {
 export function deleteCounterparty(bicCode) {
   return api.delete(`/counterparty/${bicCode}`)
 }
+
+export function translateMessage(rawPayload, targetStandard) {
+  const data = { rawPayload }
+  if (targetStandard) data.targetStandard = targetStandard
+  return api.post('/translation/translate', data)
+}
+
+export function detectMessage(rawPayload) {
+  return api.post('/translation/detect', { rawPayload })
+}
+
+export function reconcilePositions() {
+  return api.post('/positions/reconcile')
+}
+
+export function dailyClose() {
+  return api.post('/positions/daily-close')
+}
+
+export const matchingApi = {
+  list(params = {}) {
+    return api.get('/matching', { params })
+  },
+  submit(instruction) {
+    return api.post('/matching', instruction)
+  },
+  retry(id) {
+    return api.post(`/matching/${id}/retry`)
+  },
+  cancel(id) {
+    return api.post(`/matching/${id}/cancel`)
+  },
+  alleged() {
+    return api.get('/matching/alleged')
+  },
+  unmatched() {
+    return api.get('/matching/unmatched')
+  }
+}
+
+export const dvpApi = {
+  lock(tradeRef) {
+    return api.post(`/dvp/${tradeRef}/lock`)
+  },
+  complete(tradeRef) {
+    return api.post(`/dvp/${tradeRef}/complete`)
+  },
+  rollback(tradeRef) {
+    return api.post(`/dvp/${tradeRef}/rollback`)
+  },
+  cashAccounts(accountId) {
+    const params = accountId ? { accountId } : {}
+    return api.get('/dvp/cash-accounts', { params })
+  }
+}
+
+export const partialApi = {
+  shape(instructionId, batchSize) {
+    const params = batchSize ? { batchSize } : {}
+    return api.post(`/partial-settlement/${instructionId}/shape`, null, { params })
+  },
+  getSplits(instructionId) {
+    return api.get(`/partial-settlement/${instructionId}`)
+  },
+  completeSplit(partialId) {
+    return api.post(`/partial-settlement/split/${partialId}/complete`)
+  }
+}

@@ -1,5 +1,6 @@
 package com.settlement.entity;
 
+import com.settlement.canonical.PaymentType;
 import jakarta.persistence.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -51,6 +52,21 @@ public class SettlementInstruction {
 
     @Column(name = "FAILURE_REASON", length = 1000)
     private String failureReason;
+
+    @Column(name = "CURRENCY", nullable = false, length = 3)
+    private String currency = "HKD";
+
+    @Column(name = "SETTLEMENT_AMOUNT", precision = 18, scale = 2)
+    private BigDecimal settlementAmount;
+
+    @Column(name = "PAYMENT_TYPE", nullable = false, length = 20)
+    private String paymentType = PaymentType.AGAINST_PAYMENT.name();
+
+    @Column(name = "FINALITY_TIMESTAMP")
+    private LocalDateTime finalityTimestamp;
+
+    @Column(name = "IS_FINAL", nullable = false)
+    private boolean isFinal = false;
 
     @Column(name = "CREATED_AT", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -179,5 +195,45 @@ public class SettlementInstruction {
 
     public LocalDateTime getUpdatedAt() {
         return updatedAt;
+    }
+
+    public String getCurrency() {
+        return currency;
+    }
+
+    public void setCurrency(String currency) {
+        this.currency = currency;
+    }
+
+    public BigDecimal getSettlementAmount() {
+        return settlementAmount;
+    }
+
+    public void setSettlementAmount(BigDecimal settlementAmount) {
+        this.settlementAmount = settlementAmount;
+    }
+
+    public String getPaymentType() {
+        return paymentType;
+    }
+
+    public void setPaymentType(String paymentType) {
+        this.paymentType = paymentType;
+    }
+
+    public LocalDateTime getFinalityTimestamp() {
+        return finalityTimestamp;
+    }
+
+    public void setFinalityTimestamp(LocalDateTime finalityTimestamp) {
+        this.finalityTimestamp = finalityTimestamp;
+    }
+
+    public boolean isFinal() {
+        return isFinal;
+    }
+
+    public void setFinal(boolean isFinal) {
+        this.isFinal = isFinal;
     }
 }
