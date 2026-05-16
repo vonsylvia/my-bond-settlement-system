@@ -2,8 +2,6 @@ package com.settlement.reconcile;
 
 import com.settlement.bridge.ReconciliationHandler;
 import com.settlement.dao.AuditLogDao;
-import com.settlement.dao.BondHoldingDao;
-import com.settlement.dao.SecurityMovementDao;
 import com.settlement.dao.SettlementInstructionDao;
 import com.settlement.dao.SwiftMessageDao;
 import com.settlement.canonical.CanonicalStatusAdvice;
@@ -29,8 +27,6 @@ public class ReconciliationService implements ReconciliationHandler {
     private static final Logger log = LoggerFactory.getLogger(ReconciliationService.class);
 
     private final SettlementInstructionDao instructionDao;
-    private final BondHoldingDao holdingDao;
-    private final SecurityMovementDao movementDao;
     private final AuditLogDao auditLogDao;
     private final SwiftMessageDao swiftMessageDao;
     private final ReconciliationMetrics metrics;
@@ -38,16 +34,12 @@ public class ReconciliationService implements ReconciliationHandler {
     private final SwiftMessageStrategyFactory strategyFactory;
 
     public ReconciliationService(SettlementInstructionDao instructionDao,
-                                 BondHoldingDao holdingDao,
-                                 SecurityMovementDao movementDao,
                                  AuditLogDao auditLogDao,
                                  SwiftMessageDao swiftMessageDao,
                                  ReconciliationMetrics metrics,
                                  AlertWebhookService alertService,
                                  SwiftMessageStrategyFactory strategyFactory) {
         this.instructionDao = instructionDao;
-        this.holdingDao = holdingDao;
-        this.movementDao = movementDao;
         this.auditLogDao = auditLogDao;
         this.swiftMessageDao = swiftMessageDao;
         this.metrics = metrics;

@@ -81,7 +81,7 @@ class ReconciliationServiceTest {
         MtStrategy mtStrategy = new MtStrategy();
         SwiftMessageStrategyFactory factory = new SwiftMessageStrategyFactory(List.of(mtStrategy));
         reconciliationService = new ReconciliationService(
-                instructionDao, holdingDao, movementDao, auditLogDao,
+                instructionDao, auditLogDao,
                 swiftMessageDao, metrics, alertService, factory);
 
         sampleInstruction = new SettlementInstruction();
