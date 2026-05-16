@@ -34,8 +34,17 @@ public class SettlementRequest {
     @Size(max = 50, message = "Account ID must not exceed 50 characters")
     private String accountId;
 
-    @Pattern(regexp = "^(MT|MX)?$", message = "Preferred standard must be MT or MX")
+    @Pattern(regexp = "^(MT|MX)$", message = "Preferred standard must be MT or MX")
     private String preferredStandard;
+
+    @Pattern(regexp = "^(HKD|USD|EUR|CNY)?$", message = "Currency must be HKD, USD, EUR, or CNY")
+    private String currency;
+
+    @DecimalMin(value = "0.00", inclusive = true, message = "Settlement amount must be non-negative")
+    private BigDecimal settlementAmount;
+
+    @Pattern(regexp = "^(AGAINST_PAYMENT|FREE_OF_PAYMENT)?$", message = "Payment type must be AGAINST_PAYMENT or FREE_OF_PAYMENT")
+    private String paymentType;
 
     public String getIsin() {
         return isin;
@@ -99,5 +108,29 @@ public class SettlementRequest {
 
     public void setPreferredStandard(String preferredStandard) {
         this.preferredStandard = preferredStandard;
+    }
+
+    public String getCurrency() {
+        return currency;
+    }
+
+    public void setCurrency(String currency) {
+        this.currency = currency;
+    }
+
+    public BigDecimal getSettlementAmount() {
+        return settlementAmount;
+    }
+
+    public void setSettlementAmount(BigDecimal settlementAmount) {
+        this.settlementAmount = settlementAmount;
+    }
+
+    public String getPaymentType() {
+        return paymentType;
+    }
+
+    public void setPaymentType(String paymentType) {
+        this.paymentType = paymentType;
     }
 }

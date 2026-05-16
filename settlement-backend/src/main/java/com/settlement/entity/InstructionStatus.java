@@ -7,5 +7,6 @@ public enum InstructionStatus {
     MATCHED,
     FAILED,
     RETRYING,
-    CANCELLED
+    CANCELLED,
+    DVP_LOCKED
 }

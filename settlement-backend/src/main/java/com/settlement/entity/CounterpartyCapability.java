@@ -42,8 +42,13 @@ public class CounterpartyCapability {
 
     /**
      * Resolves the actual message standard to use when sending to this counterparty.
+     * Takes effective date into account — if the capability is not yet effective,
+     * falls back to MT (the legacy default).
      */
     public MessageStandard resolveOutboundStandard() {
+        if (effectiveDate != null && effectiveDate.isAfter(LocalDate.now())) {
+            return MessageStandard.MT;
+        }
         return switch (supportedStandard) {
             case MT_ONLY -> MessageStandard.MT;
             case MX_ONLY -> MessageStandard.MX;

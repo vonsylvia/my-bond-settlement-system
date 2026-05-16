@@ -102,12 +102,15 @@ public class SettlementXaExecutor {
         SwiftMessage outbound = swiftMessageDao
                 .findLatestOutboundByStandard(instruction.getId(), sendStandard)
                 .orElseGet(() -> {
-                    SwiftMessageStrategy fallbackStrategy = strategyFactory.getStrategy(instruction.getPreferredStandard());
+                    SwiftMessageStrategy routeStrategy = strategyFactory.getStrategy(sendStandard);
                     CanonicalSettlement c = canonicalMapper.toCanonical(instruction);
-                    String fallbackType = fallbackStrategy.getOutboundMessageType(c);
-                    return swiftMessageDao.findLatestOutbound(instruction.getId(), fallbackType)
-                            .orElseThrow(() -> new NonRetryableSettlementException(
-                                    "No outbound message found for tradeRef=" + tradeRef));
+                    String rawPayload = routeStrategy.buildSettlementInstruction(c);
+                    String messageType = routeStrategy.getOutboundMessageType(c);
+                    SwiftMessage routed = new SwiftMessage(
+                            instruction.getId(), tradeRef, sendStandard, messageType,
+                            MessageDirection.OUTBOUND, rawPayload);
+                    swiftMessageDao.save(routed);
+                    return routed;
                 });
 
         messageSender.sendSwiftMessage(tradeRef, outbound.getRawPayload(),

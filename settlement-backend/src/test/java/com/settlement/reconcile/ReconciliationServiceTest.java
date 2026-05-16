@@ -9,7 +9,6 @@ import com.settlement.entity.*;
 import com.settlement.service.AlertWebhookService;
 import com.settlement.strategy.MtStrategy;
 import com.settlement.strategy.SwiftMessageStrategyFactory;
-import com.settlement.translation.TranslationService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -23,11 +22,8 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -84,10 +80,9 @@ class ReconciliationServiceTest {
         metrics = new ReconciliationMetrics();
         MtStrategy mtStrategy = new MtStrategy();
         SwiftMessageStrategyFactory factory = new SwiftMessageStrategyFactory(List.of(mtStrategy));
-        TranslationService translationService = new TranslationService(factory);
         reconciliationService = new ReconciliationService(
-                instructionDao, holdingDao, movementDao, auditLogDao,
-                swiftMessageDao, metrics, alertService, factory, translationService);
+                instructionDao, auditLogDao,
+                swiftMessageDao, metrics, alertService, factory);
 
         sampleInstruction = new SettlementInstruction();
         sampleInstruction.setId(1L);
@@ -104,10 +99,8 @@ class ReconciliationServiceTest {
     }
 
     @Test
-    void processSwiftReply_shouldMatchAndUpdateHoldings_forBuy() {
+    void processSwiftReply_shouldMarkMatchedWithoutFinalPositionMovement() {
         when(instructionDao.findByTradeRef("TR-TEST123456")).thenReturn(Optional.of(sampleInstruction));
-        when(holdingDao.findByAccountAndIsinForUpdate("ACC-001", "US0378331005")).thenReturn(Optional.empty());
-        when(holdingDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(swiftMessageDao.nextSequenceNo(anyLong(), anyString(), any())).thenReturn(1);
         when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -115,28 +108,15 @@ class ReconciliationServiceTest {
         reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED);
 
         assertThat(sampleInstruction.getStatus()).isEqualTo(InstructionStatus.MATCHED);
-
-        ArgumentCaptor<BondHolding> holdingCaptor = ArgumentCaptor.forClass(BondHolding.class);
-        verify(holdingDao).save(holdingCaptor.capture());
-        BondHolding savedHolding = holdingCaptor.getValue();
-        assertThat(savedHolding.getQuantity()).isEqualByComparingTo("1000000.00");
-        assertThat(savedHolding.getAccountId()).isEqualTo("ACC-001");
-        assertThat(savedHolding.getIsin()).isEqualTo("US0378331005");
-
-        ArgumentCaptor<SecurityMovement> movementCaptor = ArgumentCaptor.forClass(SecurityMovement.class);
-        verify(movementDao).save(movementCaptor.capture());
-        SecurityMovement movement = movementCaptor.getValue();
-        assertThat(movement.getMovementType()).isEqualTo(MovementType.CREDIT);
-        assertThat(movement.getQuantity()).isEqualByComparingTo("1000000.00");
-        assertThat(movement.getBalanceAfter()).isEqualByComparingTo("1000000.00");
-        assertThat(movement.getTradeRef()).isEqualTo("TR-TEST123456");
+        assertThat(sampleInstruction.isFinal()).isFalse();
+        assertThat(sampleInstruction.getFinalityTimestamp()).isNull();
+        verify(holdingDao, never()).save(any());
+        verify(movementDao, never()).save(any());
     }
 
     @Test
     void processSwiftReply_shouldStoreInboundMessage() {
         when(instructionDao.findByTradeRef("TR-TEST123456")).thenReturn(Optional.of(sampleInstruction));
-        when(holdingDao.findByAccountAndIsinForUpdate("ACC-001", "US0378331005")).thenReturn(Optional.empty());
-        when(holdingDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(swiftMessageDao.nextSequenceNo(anyLong(), anyString(), any())).thenReturn(1);
         when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -150,107 +130,6 @@ class ReconciliationServiceTest {
         assertThat(saved.getDirection()).isEqualTo(MessageDirection.INBOUND);
         assertThat(saved.getMessageStandard()).isEqualTo(MessageStandard.MT);
         assertThat(saved.getRawPayload()).isEqualTo(MT548_MATCHED);
-    }
-
-    @Test
-    void processSwiftReply_shouldAddToExistingHoldings_forBuy() {
-        BondHolding existingHolding = new BondHolding();
-        existingHolding.setAccountId("ACC-001");
-        existingHolding.setIsin("US0378331005");
-        existingHolding.setQuantity(new BigDecimal("500000.00"));
-
-        when(instructionDao.findByTradeRef("TR-TEST123456")).thenReturn(Optional.of(sampleInstruction));
-        when(holdingDao.findByAccountAndIsinForUpdate("ACC-001", "US0378331005")).thenReturn(Optional.of(existingHolding));
-        when(holdingDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(swiftMessageDao.nextSequenceNo(anyLong(), anyString(), any())).thenReturn(1);
-        when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
-
-        reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED);
-
-        ArgumentCaptor<BondHolding> captor = ArgumentCaptor.forClass(BondHolding.class);
-        verify(holdingDao).save(captor.capture());
-        assertThat(captor.getValue().getQuantity()).isEqualByComparingTo("1500000.00");
-
-        ArgumentCaptor<SecurityMovement> movementCaptor = ArgumentCaptor.forClass(SecurityMovement.class);
-        verify(movementDao).save(movementCaptor.capture());
-        SecurityMovement movement = movementCaptor.getValue();
-        assertThat(movement.getMovementType()).isEqualTo(MovementType.CREDIT);
-        assertThat(movement.getBalanceAfter()).isEqualByComparingTo("1500000.00");
-    }
-
-    @Test
-    void processSwiftReply_shouldSubtractHoldings_forSell() {
-        sampleInstruction.setDirection(Direction.SELL);
-        sampleInstruction.setQuantity(new BigDecimal("300000.00"));
-
-        BondHolding existingHolding = new BondHolding();
-        existingHolding.setAccountId("ACC-001");
-        existingHolding.setIsin("US0378331005");
-        existingHolding.setQuantity(new BigDecimal("500000.00"));
-
-        when(instructionDao.findByTradeRef("TR-TEST123456")).thenReturn(Optional.of(sampleInstruction));
-        when(holdingDao.findByAccountAndIsinForUpdate("ACC-001", "US0378331005")).thenReturn(Optional.of(existingHolding));
-        when(holdingDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(swiftMessageDao.nextSequenceNo(anyLong(), anyString(), any())).thenReturn(1);
-        when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
-
-        reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED);
-
-        ArgumentCaptor<BondHolding> captor = ArgumentCaptor.forClass(BondHolding.class);
-        verify(holdingDao).save(captor.capture());
-        assertThat(captor.getValue().getQuantity()).isEqualByComparingTo("200000.00");
-
-        ArgumentCaptor<SecurityMovement> movementCaptor = ArgumentCaptor.forClass(SecurityMovement.class);
-        verify(movementDao).save(movementCaptor.capture());
-        SecurityMovement movement = movementCaptor.getValue();
-        assertThat(movement.getMovementType()).isEqualTo(MovementType.DEBIT);
-        assertThat(movement.getQuantity()).isEqualByComparingTo("300000.00");
-        assertThat(movement.getBalanceAfter()).isEqualByComparingTo("200000.00");
-    }
-
-    @Test
-    void processSwiftReply_shouldMarkFailed_onInsufficientHoldings_forSell() {
-        sampleInstruction.setDirection(Direction.SELL);
-        sampleInstruction.setQuantity(new BigDecimal("600000.00"));
-
-        BondHolding existingHolding = new BondHolding();
-        existingHolding.setAccountId("ACC-001");
-        existingHolding.setIsin("US0378331005");
-        existingHolding.setQuantity(new BigDecimal("500000.00"));
-
-        when(instructionDao.findByTradeRef("TR-TEST123456")).thenReturn(Optional.of(sampleInstruction));
-        when(holdingDao.findByAccountAndIsinForUpdate("ACC-001", "US0378331005")).thenReturn(Optional.of(existingHolding));
-        when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(swiftMessageDao.nextSequenceNo(anyLong(), anyString(), any())).thenReturn(1);
-        when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
-
-        reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED);
-
-        assertThat(sampleInstruction.getStatus()).isEqualTo(InstructionStatus.FAILED);
-        assertThat(sampleInstruction.getFailureReason()).contains("Insufficient");
-        verify(movementDao, never()).save(any());
-        verify(holdingDao, never()).save(any());
-    }
-
-    @Test
-    void processSwiftReply_shouldMarkFailed_whenSellingWithNoHolding() {
-        sampleInstruction.setDirection(Direction.SELL);
-        sampleInstruction.setQuantity(new BigDecimal("100000.00"));
-
-        when(instructionDao.findByTradeRef("TR-TEST123456")).thenReturn(Optional.of(sampleInstruction));
-        when(holdingDao.findByAccountAndIsinForUpdate("ACC-001", "US0378331005")).thenReturn(Optional.empty());
-        when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
-        when(swiftMessageDao.nextSequenceNo(anyLong(), anyString(), any())).thenReturn(1);
-        when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
-
-        reconciliationService.processSwiftReply("TR-TEST123456", MT548_MATCHED);
-
-        assertThat(sampleInstruction.getStatus()).isEqualTo(InstructionStatus.FAILED);
-        assertThat(sampleInstruction.getFailureReason()).contains("no existing holding");
-        verify(holdingDao, never()).save(any());
-        verify(movementDao, never()).save(any());
     }
 
     @Test
@@ -334,8 +213,6 @@ class ReconciliationServiceTest {
     @Test
     void processSwiftReply_shouldRecordMetrics_onMatch() {
         when(instructionDao.findByTradeRef("TR-TEST123456")).thenReturn(Optional.of(sampleInstruction));
-        when(holdingDao.findByAccountAndIsinForUpdate("ACC-001", "US0378331005")).thenReturn(Optional.empty());
-        when(holdingDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(swiftMessageDao.nextSequenceNo(anyLong(), anyString(), any())).thenReturn(1);
         when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));

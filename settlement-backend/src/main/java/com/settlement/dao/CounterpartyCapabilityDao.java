@@ -5,6 +5,7 @@ import jakarta.persistence.EntityManager;
 import jakarta.persistence.PersistenceContext;
 import jakarta.persistence.TypedQuery;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
@@ -15,6 +16,7 @@ public class CounterpartyCapabilityDao {
     @PersistenceContext
     private EntityManager entityManager;
 
+    @Transactional(readOnly = true)
     public Optional<CounterpartyCapability> findByBic(String bicCode) {
         CounterpartyCapability entity = entityManager.find(CounterpartyCapability.class, bicCode);
         if (entity != null && entity.isActive()) {
@@ -23,9 +25,7 @@ public class CounterpartyCapabilityDao {
         return Optional.empty();
     }
 
-    /**
-     * Looks up by BIC, trying both 8-char and 11-char forms (with XXX padding).
-     */
+    @Transactional(readOnly = true)
     public Optional<CounterpartyCapability> findByBicFuzzy(String bicCode) {
         Optional<CounterpartyCapability> exact = findByBic(bicCode);
         if (exact.isPresent()) return exact;
@@ -39,6 +39,7 @@ public class CounterpartyCapabilityDao {
         return Optional.empty();
     }
 
+    @Transactional(readOnly = true)
     public List<CounterpartyCapability> findAll() {
         TypedQuery<CounterpartyCapability> query = entityManager.createQuery(
                 "SELECT c FROM CounterpartyCapability c WHERE c.active = true ORDER BY c.bicCode",
@@ -46,6 +47,7 @@ public class CounterpartyCapabilityDao {
         return query.getResultList();
     }
 
+    @Transactional
     public CounterpartyCapability save(CounterpartyCapability entity) {
         if (entityManager.find(CounterpartyCapability.class, entity.getBicCode()) == null) {
             entityManager.persist(entity);

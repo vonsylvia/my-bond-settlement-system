@@ -2,6 +2,8 @@ package com.settlement.entity;
 
 import org.junit.jupiter.api.Test;
 
+import java.time.LocalDate;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class CounterpartyCapabilityTest {
@@ -36,5 +38,35 @@ class CounterpartyCapabilityTest {
                 "BOFAUS3NXXX", "BofA",
                 SupportedStandard.DUAL, MessageStandard.MT);
         assertThat(cap.resolveOutboundStandard()).isEqualTo(MessageStandard.MT);
+    }
+
+    @Test
+    void resolveOutboundStandard_shouldFallbackToMT_whenEffectiveDateInFuture() {
+        CounterpartyCapability cap = new CounterpartyCapability(
+                "FUTUREBICXX", "Future Bank",
+                SupportedStandard.MX_ONLY, MessageStandard.MX);
+        cap.setEffectiveDate(LocalDate.now().plusDays(30));
+
+        assertThat(cap.resolveOutboundStandard()).isEqualTo(MessageStandard.MT);
+    }
+
+    @Test
+    void resolveOutboundStandard_shouldUseConfigured_whenEffectiveDateInPast() {
+        CounterpartyCapability cap = new CounterpartyCapability(
+                "PASTBICXXXX", "Past Bank",
+                SupportedStandard.MX_ONLY, MessageStandard.MX);
+        cap.setEffectiveDate(LocalDate.now().minusDays(1));
+
+        assertThat(cap.resolveOutboundStandard()).isEqualTo(MessageStandard.MX);
+    }
+
+    @Test
+    void resolveOutboundStandard_shouldUseConfigured_whenEffectiveDateIsToday() {
+        CounterpartyCapability cap = new CounterpartyCapability(
+                "TODAYBICXXX", "Today Bank",
+                SupportedStandard.DUAL, MessageStandard.MX);
+        cap.setEffectiveDate(LocalDate.now());
+
+        assertThat(cap.resolveOutboundStandard()).isEqualTo(MessageStandard.MX);
     }
 }

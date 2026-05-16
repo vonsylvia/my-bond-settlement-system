@@ -197,7 +197,7 @@ class SettlementControllerTest {
     private SettlementRequest createValidRequest() {
         SettlementRequest request = new SettlementRequest();
         request.setIsin("US0378331005");
-        request.setSettlementDate(LocalDate.of(2026, 5, 15));
+        request.setSettlementDate(LocalDate.now().plusDays(1));
         request.setQuantity(new BigDecimal("1000000.00"));
         request.setCounterparty("Goldman Sachs");
         request.setBicCode("GOLDUS33XXX");
@@ -210,7 +210,7 @@ class SettlementControllerTest {
         SettlementInstruction instruction = new SettlementInstruction();
         instruction.setTradeRef("TR-TEST123456");
         instruction.setIsin("US0378331005");
-        instruction.setSettlementDate(LocalDate.of(2026, 5, 15));
+        instruction.setSettlementDate(LocalDate.now().plusDays(1));
         instruction.setQuantity(new BigDecimal("1000000.00"));
         instruction.setCounterparty("Goldman Sachs");
         instruction.setBicCode("GOLDUS33XXX");

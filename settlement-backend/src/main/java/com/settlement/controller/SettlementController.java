@@ -114,6 +114,12 @@ public class SettlementController {
         response.setAccountId(instruction.getAccountId());
         response.setRetryCount(instruction.getRetryCount());
         response.setFailureReason(instruction.getFailureReason());
+        response.setCurrency(instruction.getCurrency());
+        response.setSettlementAmount(instruction.getSettlementAmount());
+        response.setPaymentType(instruction.getPaymentType());
+        response.setPreferredStandard(instruction.getPreferredStandard().name());
+        response.setFinalityTimestamp(instruction.getFinalityTimestamp());
+        response.setFinal(instruction.isFinal());
         response.setCreatedAt(instruction.getCreatedAt());
         response.setUpdatedAt(instruction.getUpdatedAt());
         return response;

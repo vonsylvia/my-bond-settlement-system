@@ -7,14 +7,13 @@ import com.settlement.dao.SwiftMessageDao;
 import com.settlement.dto.HoldingResponse;
 import com.settlement.dto.SettlementRequest;
 import com.settlement.canonical.CanonicalSettlement;
+import com.settlement.canonical.PaymentType;
 import com.settlement.entity.*;
 import com.settlement.exception.BusinessException;
 import com.settlement.exception.ResourceNotFoundException;
 import com.settlement.strategy.CanonicalMapper;
 import com.settlement.strategy.SwiftMessageStrategy;
 import com.settlement.strategy.SwiftMessageStrategyFactory;
-import com.settlement.translation.TranslationResult;
-import com.settlement.translation.TranslationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -37,7 +36,6 @@ public class SettlementService {
     private final SwiftMessageStrategyFactory strategyFactory;
     private final CanonicalMapper canonicalMapper;
     private final AsyncSettlementProcessor asyncProcessor;
-    private final TranslationService translationService;
 
     public SettlementService(SettlementInstructionDao instructionDao,
                              BondHoldingDao holdingDao,
@@ -45,8 +43,7 @@ public class SettlementService {
                              SwiftMessageDao swiftMessageDao,
                              SwiftMessageStrategyFactory strategyFactory,
                              CanonicalMapper canonicalMapper,
-                             AsyncSettlementProcessor asyncProcessor,
-                             TranslationService translationService) {
+                             AsyncSettlementProcessor asyncProcessor) {
         this.instructionDao = instructionDao;
         this.holdingDao = holdingDao;
         this.auditLogDao = auditLogDao;
@@ -54,7 +51,6 @@ public class SettlementService {
         this.strategyFactory = strategyFactory;
         this.canonicalMapper = canonicalMapper;
         this.asyncProcessor = asyncProcessor;
-        this.translationService = translationService;
     }
 
     /**
@@ -66,9 +62,16 @@ public class SettlementService {
     public SettlementInstruction submitInstruction(SettlementRequest request) {
         String tradeRef = generateTradeRef();
 
-        MessageStandard standard = request.getPreferredStandard() != null
+        MessageStandard standard = (request.getPreferredStandard() != null
+                && !request.getPreferredStandard().isBlank())
                 ? MessageStandard.valueOf(request.getPreferredStandard())
                 : MessageStandard.MT;
+
+        String currency = (request.getCurrency() != null && !request.getCurrency().isBlank())
+                ? request.getCurrency() : "HKD";
+
+        String paymentType = (request.getPaymentType() != null && !request.getPaymentType().isBlank())
+                ? request.getPaymentType() : PaymentType.AGAINST_PAYMENT.name();
 
         SettlementInstruction instruction = new SettlementInstruction();
         instruction.setTradeRef(tradeRef);
@@ -81,6 +84,9 @@ public class SettlementService {
         instruction.setAccountId(request.getAccountId());
         instruction.setStatus(InstructionStatus.PENDING);
         instruction.setPreferredStandard(standard);
+        instruction.setCurrency(currency);
+        instruction.setPaymentType(paymentType);
+        instruction.setSettlementAmount(request.getSettlementAmount());
 
         instructionDao.save(instruction);
 
@@ -94,10 +100,8 @@ public class SettlementService {
                 MessageDirection.OUTBOUND, rawMessage);
         swiftMessageDao.save(primaryMsg);
 
-        storeDualFormatCopy(instruction.getId(), tradeRef, rawMessage);
-
         auditLogDao.save(new AuditLog(tradeRef, AuditEventType.INSTRUCTION_CREATED,
-                "Instruction saved (dual-format: MT+MX), async XA processing queued. ISIN="
+                "Instruction saved, async XA processing queued. ISIN="
                         + request.getIsin() + " QTY=" + request.getQuantity()));
 
         log.info("Settlement instruction created: tradeRef={}, ISIN={}, direction={}, standard={} — async send queued",
@@ -120,6 +124,11 @@ public class SettlementService {
         SettlementInstruction instruction = instructionDao.findByTradeRef(tradeRef)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Settlement instruction not found: " + tradeRef));
+
+        if (instruction.isFinal()) {
+            throw new BusinessException(
+                    "Cannot modify finalized instruction: " + tradeRef);
+        }
 
         if (instruction.getStatus() != InstructionStatus.FAILED) {
             throw new BusinessException(
@@ -170,28 +179,6 @@ public class SettlementService {
         resp.setQuantity(holding.getQuantity());
         resp.setUpdatedAt(holding.getUpdatedAt());
         return resp;
-    }
-
-    /**
-     * Generates the translated copy (MT→MX or MX→MT) and stores it alongside
-     * the primary message. Failures are logged but do not block settlement.
-     */
-    private void storeDualFormatCopy(Long instructionId, String tradeRef, String primaryPayload) {
-        try {
-            TranslationResult translated = translationService.translate(primaryPayload);
-            SwiftMessage translatedMsg = new SwiftMessage(
-                    instructionId, tradeRef,
-                    translated.targetStandard(), translated.targetMessageType(),
-                    MessageDirection.OUTBOUND, translated.translatedPayload());
-            translatedMsg.setTranslated(true);
-            swiftMessageDao.save(translatedMsg);
-
-            log.debug("Dual-format copy stored: tradeRef={}, translatedTo={}",
-                    tradeRef, translated.targetStandard());
-        } catch (Exception e) {
-            log.warn("Failed to generate dual-format copy for tradeRef={}: {}. " +
-                    "Primary message is unaffected.", tradeRef, e.getMessage());
-        }
     }
 
     private void scheduleAfterCommit(String tradeRef) {

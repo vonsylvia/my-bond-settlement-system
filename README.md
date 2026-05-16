@@ -1,18 +1,24 @@
 # Bond Settlement System
 
-A complete SWIFT bond settlement system built for IBM WebSphere + Oracle environment.
+A SWIFT bond settlement workflow system built for IBM WebSphere + Oracle environment.
 
 ## Architecture
 
-- **Frontend**: Vue.js 3 + Vite + Axios
+- **Frontend**: Vue.js 3 + Vite + Axios — Pre-Settlement (Trade Matching) / Settlement (SWIFT Direct, Monitor, DVP) / Reference (Holdings, Counterparties)
 - **Backend**: Spring MVC 6 REST API
-- **SWIFT Messaging**: Dual-standard support (MT and MX) with automatic MT↔MX translation
-  - **MT (FIN)**: Prowide Core — MT541 (send) / MT548 (receive)
-  - **MX (ISO 20022)**: Prowide ISO 20022 — sese.023.001.09 (send) / sese.024.001.10 (receive)
-  - **MT↔MX Translation**: Automatic dual-format storage + counterparty-based routing
+- **Settlement Engine**:
+  - **DVP (Delivery vs Payment)**: BIS Model 1 real-time DVP with CHATS RTGS abstraction — simultaneous securities and cash settlement (PFMI Principle 12)
+  - **Matching Engine**: Bilateral instruction matching — buy/sell counterparties submit independently; engine auto-matches on ISIN + date + direction + BIC + quantity/amount tolerance
+  - **Settlement Finality**: PFMI Principle 8 — `finalityTimestamp` and immutability flag prevent post-settlement modification
+  - **Multi-currency**: HKD / USD / EUR / CNY support throughout the data model
+- **SWIFT Messaging**: Dual-standard support (MT and MX) with explicit MT↔MX translation endpoints
+  - **MT (FIN)**: Prowide Core — MT540-543 (send) / MT548 (receive)
+  - **MX (ISO 20022)**: Prowide ISO 20022 — sese.023/025/026 (send) / sese.024 (receive)
+  - **MT↔MX Translation**: On-demand translation API using the canonical data model
   - **Strategy Pattern**: `SwiftMessageStrategy` interface with `MtStrategy` / `MxStrategy` implementations
   - **Canonical Data Model**: Format-independent `CanonicalSettlement` / `CanonicalStatusAdvice` decouples business logic from message formats
   - **Counterparty Routing**: `COUNTERPARTY_CAPABILITY` registry drives send-format selection (MT_ONLY / MX_ONLY / DUAL)
+  - **Message Type Coverage**: MT540 (RFP), MT541 (RAP), MT542 (DFP), MT543 (DAP), MT548 (Status), MT535 (Holdings), MT536 (Transactions), MT564/566 (Corporate Actions), sese.023/024/025/026, sese.002/017, seev.031/036
 - **Message Queue**: IBM MQ via JMS
   - **Sending**: Spring JmsTemplate with application-managed MQ client connection
   - **Receiving**: Message-Driven EJB (MDB) via JCA activation spec on IBM MQ Resource Adapter
@@ -33,7 +39,10 @@ A complete SWIFT bond settlement system built for IBM WebSphere + Oracle environ
 - IBM MQ 9.3+ (Jakarta-compatible Resource Adapter)
 - Oracle Database 19c+ (XE edition for dev)
 
-## Settlement Flow
+## Settlement Flows
+
+### Flow 1: SWIFT Direct Settlement (Cross-CSD)
+
 ```mermaid
 sequenceDiagram
     actor Trader
@@ -53,7 +62,7 @@ sequenceDiagram
 
     rect rgb(230, 245, 255)
         Note over SVC,DB: Phase 1 (sync): Save instruction
-        SVC->>SVC: CanonicalMapper → Strategy builds MT541 or sese.023
+        SVC->>SVC: CanonicalMapper → Strategy builds MT540-543 or sese.023
         SVC->>DB: Save instruction (PENDING) + SWIFT_MESSAGE
     end
 
@@ -92,35 +101,69 @@ sequenceDiagram
         REC->>DB: Find instruction by tradeRef
         alt Status = MATCHED
             REC->>DB: Update status → MATCHED
-            REC->>DB: Update BondHolding position (authoritative)
-            REC->>DB: Append SecurityMovement audit entry (CREDIT/DEBIT)
             REC->>DB: Audit log: SETTLEMENT_MATCHED
         else Status = FAILED
             REC->>DB: Update status → FAILED
-            REC->>DB: Audit log: SETTLEMENT_FAILED
-        else Status = PENDING
-            REC->>DB: Audit log: SETTLEMENT_PENDING
         else Status = UNKNOWN (unparseable)
-            REC->>DB: Audit log: SETTLEMENT_STATUS_UNKNOWN
             REC--)REC: Webhook alert (HIGH severity)
-            Note over REC: Instruction status unchanged,<br/>requires manual review
         end
     end
+```
 
-    opt Manual retry (FAILED instructions)
-        Trader->>UI: Click "Retry" button
-        UI->>API: POST /api/settlement/{tradeRef}/retry
-        API->>SVC: manualRetry(tradeRef)
-        SVC->>DB: Reset status → PENDING, retryCount → 0
-        SVC--)ASYNC: processSettlementAsync(tradeRef)
-        API-->>UI: 202 Accepted (status=PENDING)
+### Flow 2: Bilateral Matching + DVP Settlement (Internal CSD)
+
+```mermaid
+sequenceDiagram
+    actor Buyer
+    actor Seller
+    participant UI as Vue.js Frontend
+    participant MATCH as MatchingEngine<br/>Service
+    participant DVP as DvpSettlement<br/>Service
+    participant CHATS as CHATS Gateway<br/>(RTGS)
+    participant DB as Oracle Database
+
+    rect rgb(230, 240, 255)
+        Note over Buyer,DB: Phase 1: Trade Matching (Pre-Settlement)
+        Buyer->>UI: Submit buy matching instruction
+        UI->>MATCH: POST /api/matching (BUY)
+        MATCH->>DB: Save instruction (ALLEGED)
+        MATCH->>MATCH: findMatch() — search ALLEGED/UNMATCHED
+        Note over MATCH: No counterparty found yet
+
+        Seller->>UI: Submit sell matching instruction
+        UI->>MATCH: POST /api/matching (SELL)
+        MATCH->>MATCH: findMatch() — ISIN + date + BIC + qty/amount tolerance
+        MATCH->>DB: Both → MATCHED (cross-linked matchedWithId)
+        MATCH->>DB: Audit log: MATCHING_MATCHED
     end
 
-    Trader->>UI: Check settlement status
-    UI->>API: GET /api/settlement/{tradeRef}
-    API->>DB: Query instruction
-    DB-->>API: Instruction (status=MATCHED)
-    API-->>UI: Settlement details + status
+    rect rgb(255, 245, 230)
+        Note over Buyer,DB: Phase 2: DVP Settlement (BIS Model 1)
+        Buyer->>UI: Initiate DVP lock
+        UI->>DVP: POST /api/dvp/{tradeRef}/lock
+        DVP->>DVP: Validate payment type (AGAINST_PAYMENT)
+        DVP->>CHATS: reserveFunds(accountId, currency, amount)
+        CHATS-->>DVP: Funds reserved
+        DVP->>DB: Update status → DVP_LOCKED
+        DVP->>DB: Debit CashAccount balance
+    end
+
+    rect rgb(230, 255, 230)
+        Note over Buyer,DB: Phase 3: DVP Completion + Finality
+        Buyer->>UI: Complete DVP
+        UI->>DVP: POST /api/dvp/{tradeRef}/complete
+        DVP->>DB: Update BondHolding (securities transfer)
+        DVP->>DB: Append SecurityMovement (CREDIT/DEBIT)
+        DVP->>DB: Update status → MATCHED, set finalityTimestamp, isFinal=true
+        DVP->>DB: Audit log: DVP_COMPLETED
+        Note over DVP: Settlement finality achieved — instruction is now immutable
+    end
+
+    opt DVP Failure
+        UI->>DVP: POST /api/dvp/{tradeRef}/rollback
+        DVP->>CHATS: releaseFunds(accountId, currency, amount)
+        DVP->>DB: Update status → FAILED, restore CashAccount
+    end
 ```
 
 ### Component Architecture
@@ -218,42 +261,40 @@ docker exec -i settlement-oracle bash -c \
 # Check MQ connectivity
 curl http://localhost:9080/settlement/api/mq/health
 
-# Submit a settlement instruction (MT format, default)
+# Submit a DVP settlement instruction (BUY, HKD)
 curl -X POST http://localhost:9080/settlement/api/settlement \
   -H "Content-Type: application/json" \
   -d '{
-    "isin": "US0378331005",
-    "quantity": 1000,
+    "isin": "HK0000163607",
+    "quantity": 100000,
     "direction": "BUY",
-    "counterparty": "DEUTDEFF",
-    "bicCode": "CITIUS33",
+    "counterparty": "HSBC HK",
+    "bicCode": "HSBCHKHKXXX",
     "accountId": "ACC-001",
-    "settlementDate": "2026-06-01"
+    "settlementDate": "2026-06-01",
+    "currency": "HKD",
+    "settlementAmount": 980000.00,
+    "paymentType": "AGAINST_PAYMENT"
   }'
 
-# Submit using MX (ISO 20022) format
-curl -X POST http://localhost:9080/settlement/api/settlement \
+# Submit matching instructions (bilateral)
+curl -X POST http://localhost:9080/settlement/api/matching \
   -H "Content-Type: application/json" \
-  -d '{
-    "isin": "DE0001102580",
-    "quantity": 50000,
-    "direction": "BUY",
-    "counterparty": "Goldman Sachs",
-    "bicCode": "GOLDUS33XXX",
-    "accountId": "ACC-001",
-    "settlementDate": "2026-06-15",
-    "preferredStandard": "MX"
-  }'
+  -d '{"tradeRef":"M-BUY-001","isin":"HK0000163607","settlementDate":"2026-06-01","quantity":100000,"amount":98000,"currency":"HKD","submitterBic":"HSBCHKHKXXX","counterpartyBic":"BABORHKHXXX","direction":"BUY"}'
 
-# Test MDB message delivery (MT548 reply)
-curl -X POST "http://localhost:9080/settlement/api/mq/test-mdb?correlationId=TEST-001"
+curl -X POST http://localhost:9080/settlement/api/matching \
+  -H "Content-Type: application/json" \
+  -d '{"tradeRef":"M-SELL-001","isin":"HK0000163607","settlementDate":"2026-06-01","quantity":100000,"amount":98000,"currency":"HKD","submitterBic":"BABORHKHXXX","counterpartyBic":"HSBCHKHKXXX","direction":"SELL"}'
+# Both should auto-match (status=MATCHED)
 
-# Test MDB with MX (sese.024) reply
-curl -X POST "http://localhost:9080/settlement/api/mq/test-mdb?correlationId=TR-XXX&standard=MX&status=matched"
-
-# Check application health
+# Check holdings and cash accounts
 curl http://localhost:9080/settlement/api/holdings
+curl http://localhost:9080/settlement/api/dvp/cash-accounts
 ```
+
+Current REST paths:
+- Settlement list endpoint is `GET /settlement/api/settlement`
+- MQ health endpoint is `GET /settlement/api/mq/health`
 
 ### 6. Build frontend (optional)
 
@@ -380,26 +421,34 @@ my-bond-settlement-system/
 │       │   ├── MqClientConfig.java          # JNDI JMS ConnectionFactory + JmsTemplate (XA)
 │       │   └── ServiceRegistryInitializer.java  # Registers Spring beans for MDB access
 │       ├── controller/
-│       │   ├── SettlementController.java    # REST API (settlements + messages)
+│       │   ├── SettlementController.java    # Settlement CRUD + messages
+│       │   ├── MatchingController.java      # Bilateral matching (submit/retry/cancel/list)
+│       │   ├── DvpController.java           # DVP operations (lock/complete/rollback + cash accounts)
 │       │   ├── CounterpartyController.java  # Counterparty capability CRUD
 │       │   ├── TranslationController.java   # MT↔MX translation API
-│       │   └── MqConnectivityController.java # MQ health & MDB test endpoints (MT + MX)
+│       │   └── MqConnectivityController.java # MQ health & MDB test endpoints
 │       ├── strategy/                        # MT/MX Strategy Pattern
 │       │   ├── SwiftMessageStrategy.java    # Strategy interface (build + parse)
-│       │   ├── MtStrategy.java              # MT541 build / MT548 parse
+│       │   ├── MtStrategy.java              # MT540-543 build / MT548 parse
 │       │   ├── MxStrategy.java              # sese.023 build / sese.024 parse
 │       │   ├── SwiftMessageStrategyFactory.java # Strategy resolver + auto-detect
 │       │   └── CanonicalMapper.java         # Entity ↔ Canonical mapping
 │       ├── translation/                     # MT↔MX Translation Service
 │       │   └── TranslationService.java      # Canonical-pivot translation (instruction + status)
-│       ├── service/                         # Business logic
+│       ├── service/
+│       │   ├── SettlementService.java       # Settlement orchestration
+│       │   ├── DvpSettlementService.java    # BIS Model 1 DVP (lock → reserve → complete)
+│       │   ├── MatchingEngineService.java   # Bilateral matching with tolerance
+│       │   ├── ChatsGateway.java            # CHATS RTGS interface abstraction
+│       │   ├── LocalChatsGateway.java       # Local CHATS implementation
+│       │   └── MessageTypeResolver.java     # SWIFT message type resolution
 │       ├── jms/SwiftMessageSender.java      # JMS sender (MT/MX agnostic)
 │       ├── reconcile/
-│       │   ├── ReconciliationService.java       # MT548/sese.024 processing & position updates
+│       │   ├── ReconciliationService.java       # MT548/sese.024 status processing
 │       │   └── PositionReconciliationService.java # Incremental & daily-close reconciliation
-│       ├── dao/                             # Data access (JPA)
-│       ├── entity/                          # JPA entities (incl. SwiftMessage)
-│       └── dto/                             # Request/Response DTOs
+│       ├── dao/                             # Data access (JPA) — incl. CashAccount, Matching
+│       ├── entity/                          # JPA entities — incl. CashAccount, MatchingInstruction
+│       └── dto/                             # Request/Response DTOs (with currency, amount, finality fields)
 ├── settlement-ejb/                  # EJB module
 │   └── src/main/
 │       ├── java/com/settlement/ejb/
@@ -409,29 +458,52 @@ my-bond-settlement-system/
 │           └── ibm-ejb-jar-bnd.xml          # Liberty MDB activation spec binding
 ├── settlement-ear/                  # EAR packaging
 └── settlement-frontend/             # Vue.js 3 frontend
+    └── src/
+        ├── App.vue                  # Navigation: Pre-Settlement | Settlement | Reference
+        ├── main.js                  # Vue Router
+        ├── api/settlement.js        # API module (settlement, matching, DVP)
+        ├── components/
+        │   └── StatusBadge.vue      # Status display (incl. DVP_LOCKED, finality mark)
+        └── views/
+            ├── MatchingView.vue     # Trade Matching — bilateral submit + list + retry/cancel
+            ├── DvpView.vue          # DVP operations — lock/complete/rollback + cash accounts
+            ├── SettlementForm.vue   # SWIFT Direct — submit to SWIFT network
+            ├── SettlementList.vue   # Settlement Monitor — track lifecycle
+            └── HoldingsView.vue     # Bond holdings dashboard
 ```
 
 ## Database Schema
 
-### SWIFT Message Storage (Normalised)
-
-Messages are stored in a dedicated `SWIFT_MESSAGE` table, decoupled from the business entity `SETTLEMENT_INSTRUCTION`. This supports both MT (FIN) and MX (ISO 20022) formats and enables unlimited message types without schema changes.
+### Core Tables
 
 | Table | Purpose |
 |-------|---------|
-| `SETTLEMENT_INSTRUCTION` | Business entity — format-agnostic, stores `PREFERRED_STANDARD` (MT/MX) |
-| `SWIFT_MESSAGE` | All outbound/inbound SWIFT messages with `IS_TRANSLATED` flag distinguishing originals from auto-translated copies |
-| `MESSAGE_TYPE_REGISTRY` | Metadata registry mapping MT ↔ MX equivalents and categories |
-| `COUNTERPARTY_CAPABILITY` | Counterparty MT/MX routing preferences (SUPPORTED_STANDARD + PREFERRED_STANDARD) |
+| `SETTLEMENT_INSTRUCTION` | Business entity — format-agnostic settlement instruction with DVP/finality fields (`CURRENCY`, `SETTLEMENT_AMOUNT`, `PAYMENT_TYPE`, `FINALITY_TIMESTAMP`, `IS_FINAL`) |
+| `SWIFT_MESSAGE` | Outbound/inbound SWIFT messages; translated messages are only stored when explicitly created |
+| `MESSAGE_TYPE_REGISTRY` | Metadata registry mapping MT ↔ MX equivalents (MT540-543, MT548, MT535/536, MT564/566, sese.023-026, sese.002/017, seev.031/036) |
+| `COUNTERPARTY_CAPABILITY` | Counterparty MT/MX routing preferences with `EFFECTIVE_DATE` logic |
 
-**Registered message types:**
+### DVP & Cash Management
 
-| Type | Standard | Category | Equivalent |
-|------|----------|----------|-----------|
-| MT541 | MT | SETTLEMENT | sese.023.001.09 |
-| MT548 | MT | STATUS | sese.024.001.10 |
-| sese.023.001.09 | MX | SETTLEMENT | MT541 |
-| sese.024.001.10 | MX | STATUS | MT548 |
+| Table | Purpose |
+|-------|---------|
+| `CASH_ACCOUNT` | Cash accounts with multi-currency balances (HKD/USD/EUR/CNY) for DVP cash leg |
+| `CASH_MOVEMENT` | Immutable audit trail of cash movements (DEBIT/CREDIT) linked to trade references |
+
+### Matching Engine
+
+| Table | Purpose |
+|-------|---------|
+| `MATCHING_INSTRUCTION` | Bilateral matching instructions — buyer and seller each submit; engine auto-matches on ISIN + date + direction + BIC + tolerance |
+
+### Position Management
+
+| Table | Role | Mutability |
+|-------|------|------------|
+| `BOND_HOLDING` | Authoritative position — source of truth for current balances | Updated on DVP completion/book-entry settlement |
+| `SECURITY_MOVEMENT` | Immutable audit journal of every position change | Append-only |
+| `EOD_POSITION_SNAPSHOT` | End-of-day per-position snapshot — reconciliation baseline | Daily insert |
+| `AUDIT_LOG` | Full audit trail with event types for DVP, matching, finality | Append-only |
 
 ## Position Management
 
@@ -445,7 +517,7 @@ Bond positions follow the architecture used by large Central Securities Deposito
 
 ### How It Works
 
-When a settlement is confirmed (MT548 MATCHED or sese.024 MTCHD), the system performs two writes in a single transaction:
+When a settlement reaches book-entry completion, such as DVP completion, the system performs two writes in a single transaction:
 
 1. **Update `BondHolding`** — the authoritative position for the `(account, isin)` pair, protected by a pessimistic lock (`SELECT FOR UPDATE`) to serialise concurrent updates
 2. **Append a `SecurityMovement`** — an immutable audit entry recording the CREDIT (BUY) or DEBIT (SELL), the quantity, and the resulting balance (`balanceAfter`)
@@ -544,13 +616,11 @@ SWIFT Message → Strategy → CanonicalStatusAdvice → Service → Entity
 | `SwiftMessageStrategy` | Interface for building/parsing messages (MT or MX) |
 | `SwiftMessageStrategyFactory` | Resolves strategy by standard; auto-detects from raw payload |
 
-### Outbound (Send MT541 / sese.023) — Dual-Format with Counterparty Routing
+### Outbound (Send MT54x / sese.023)
 
 ```
 SettlementService.submitInstruction():
     → CanonicalMapper → Strategy.build(primaryFormat) → SWIFT_MESSAGE (primary, IS_TRANSLATED=0)
-    → TranslationService.translate(primary) → SWIFT_MESSAGE (translated, IS_TRANSLATED=1)
-    [Both MT and MX versions stored for every instruction]
 
 SettlementXaExecutor.executeSettlement():
     → CounterpartyCapabilityDao.findByBicFuzzy(bic)
@@ -563,7 +633,7 @@ SettlementXaExecutor.executeSettlement():
     → JmsTemplate.send(SWIFT.SEND.QUEUE) → SWIFT Gateway
 ```
 
-### Inbound (Receive MT548 / sese.024) — Auto-Translation Archive
+### Inbound (Receive MT548 / sese.024)
 
 ```
 SWIFT Gateway → SWIFT.REPLY.QUEUE → JCA Activation Spec (container-managed)
@@ -572,8 +642,7 @@ SWIFT Gateway → SWIFT.REPLY.QUEUE → JCA Activation Spec (container-managed)
     → StrategyFactory.detectStrategy(rawMessage)  [auto-detect MT/MX]
     → Strategy.parseStatusReply() → CanonicalStatusAdvice
     → Save original inbound message (IS_TRANSLATED=0)
-    → TranslationService.translateStatusReply() → Save translated copy (IS_TRANSLATED=1)
-    → ReconciliationService updates status + holdings
+    → ReconciliationService updates instruction status
 ```
 
 ### MT↔MX Translation Service
@@ -697,38 +766,71 @@ Settlement submission follows a **two-phase async pattern** to minimize client l
 **Status flow:**
 
 ```
-PENDING → SUBMITTING → SENT → MATCHED          (happy path)
-PENDING → SUBMITTING → RETRYING → ... → FAILED (all 3 retries failed)
-PENDING → SUBMITTING → RETRYING → SENT         (succeeded on retry)
-FAILED  → PENDING → SUBMITTING → SENT          (manual retry success)
-SENT    → (status unchanged)                    (MT548/sese.024 unparseable → UNKNOWN, needs manual review)
+SWIFT Direct Path:
+  PENDING → SUBMITTING → SENT → MATCHED                  (matched/status confirmed)
+  PENDING → SUBMITTING → RETRYING → ... → FAILED          (all 3 retries failed)
+  PENDING → SUBMITTING → RETRYING → SENT                  (succeeded on retry)
+  FAILED  → PENDING → SUBMITTING → SENT                   (manual retry success)
+
+DVP Path:
+  PENDING → SENT → DVP_LOCKED → MATCHED (+ finality)      (DVP happy path)
+  PENDING → SENT → DVP_LOCKED → FAILED                    (DVP rollback)
+
+Matching Engine (separate MATCHING_INSTRUCTION table):
+  ALLEGED → MATCHED (auto-matched with counterparty)
+  ALLEGED → UNMATCHED (counterparty cancelled)
+  ALLEGED/UNMATCHED → CANCELLED
 ```
 
 > **Note:** During retries, the status is `RETRYING` (not `FAILED`) so API consumers can distinguish between a transient retry and a terminal failure.
+> **Note:** `MATCHED` is not finality by itself. `isFinal=true` and `finalityTimestamp` are set only when a book-entry settlement path, such as DVP completion, finalizes the instruction.
 
 ## API Endpoints
 
+### Settlement (SWIFT Direct)
+
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/api/holdings` | List all bond holdings (cached balances) |
-| `GET` | `/api/holdings/{accountId}` | Get holdings for account |
-| `POST` | `/api/settlement` | Submit settlement instruction (dual-format: MT+MX stored, routed by counterparty) |
-| `GET` | `/api/settlement/{tradeRef}` | Get instruction status (includes `retryCount`, `failureReason`) |
+| `POST` | `/api/settlement` | Submit settlement instruction (supports `currency`, `settlementAmount`, `paymentType`) |
+| `GET` | `/api/settlement/{tradeRef}` | Get instruction status (includes `finalityTimestamp`, `isFinal`) |
 | `GET` | `/api/settlement?page=&size=` | List settlement instructions (paginated) |
-| `GET` | `/api/settlement/{tradeRef}/messages` | Get all SWIFT messages (MT+MX, original+translated) for an instruction |
+| `GET` | `/api/settlement/{tradeRef}/messages` | Get all SWIFT messages for an instruction |
 | `POST` | `/api/settlement/{tradeRef}/retry` | Manual retry for FAILED instructions |
-| `GET` | `/api/counterparty` | List all counterparty capabilities (MT/MX routing preferences) |
-| `GET` | `/api/counterparty/{bicCode}` | Get counterparty capability by BIC |
-| `POST` | `/api/counterparty` | Register a new counterparty capability |
-| `PUT` | `/api/counterparty/{bicCode}` | Update counterparty capability |
-| `DELETE` | `/api/counterparty/{bicCode}` | Deactivate counterparty (soft delete) |
-| `POST` | `/api/translation/translate` | Translate a SWIFT message between MT↔MX |
+
+### Trade Matching (Pre-Settlement)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/matching` | Submit a matching instruction (BUY or SELL side) — auto-matches if counterparty exists |
+| `GET` | `/api/matching` | List all matching instructions (optional `?status=` filter) |
+| `GET` | `/api/matching/alleged` | List ALLEGED instructions (awaiting counterparty) |
+| `GET` | `/api/matching/unmatched` | List UNMATCHED instructions (counterparty cancelled) |
+| `POST` | `/api/matching/{id}/retry` | Retry matching for ALLEGED/UNMATCHED instructions |
+| `POST` | `/api/matching/{id}/cancel` | Cancel a matching instruction (un-matches counterparty if paired) |
+
+### DVP Settlement
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/dvp/{tradeRef}/lock` | Lock instruction for DVP — reserves cash via CHATS, sets DVP_LOCKED |
+| `POST` | `/api/dvp/{tradeRef}/complete` | Complete DVP — transfers securities, sets MATCHED with finality |
+| `POST` | `/api/dvp/{tradeRef}/rollback` | Rollback DVP — releases reserved funds, sets FAILED |
+| `GET` | `/api/dvp/cash-accounts` | List cash accounts (optional `?accountId=` filter) |
+
+### Reference Data & Operations
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/holdings` | List all bond holdings |
+| `GET` | `/api/holdings/{accountId}` | Get holdings for account |
+| `GET/POST/PUT/DELETE` | `/api/counterparty[/{bicCode}]` | Counterparty capability CRUD |
+| `POST` | `/api/translation/translate` | Translate SWIFT message MT↔MX |
 | `POST` | `/api/translation/detect` | Detect format/type of a SWIFT message |
-| `POST` | `/api/positions/reconcile` | Incremental reconciliation (only changed positions since last snapshot) |
-| `POST` | `/api/positions/daily-close` | Daily close: full reconciliation + persist snapshot as new baseline |
+| `POST` | `/api/positions/reconcile` | Incremental reconciliation |
+| `POST` | `/api/positions/daily-close` | Daily close: full reconciliation + persist snapshot |
 | `GET` | `/api/mq/health` | IBM MQ connection health check |
-| `POST` | `/api/mq/test-mdb` | Send test reply (MT548 or sese.024) to verify MDB processing |
-| `GET` | `/api/mq/stats` | MDB + reconciliation metrics + live queue depth/consumer status |
+| `POST` | `/api/mq/test-mdb` | Send test reply to verify MDB processing |
+| `GET` | `/api/mq/stats` | MDB + reconciliation metrics + queue status |
 
 **Settlement submission** (`POST /api/settlement`):
 
@@ -741,11 +843,19 @@ SENT    → (status unchanged)                    (MT548/sese.024 unparseable �
   "bicCode": "DEUTDEFFXXX",
   "accountId": "ACC-001",
   "settlementDate": "2026-06-01",
-  "preferredStandard": "MX"
+  "preferredStandard": "MX",
+  "currency": "HKD",
+  "settlementAmount": 980000.00,
+  "paymentType": "AGAINST_PAYMENT"
 }
 ```
 
-The `preferredStandard` field accepts `"MT"` (default) or `"MX"`. MT generates MT541 (FIN), MX generates sese.023.001.09 (ISO 20022 XML).
+| Field | Required | Description |
+|-------|----------|-------------|
+| `preferredStandard` | No | `"MT"` (default) or `"MX"` — determines SWIFT message format |
+| `currency` | No | `HKD` / `USD` / `EUR` / `CNY` — settlement currency |
+| `settlementAmount` | No | Cash amount for DVP instructions |
+| `paymentType` | No | `AGAINST_PAYMENT` (DVP) or `FREE_OF_PAYMENT` (FOP) |
 
 **MDB test** (`POST /api/mq/test-mdb`):
 

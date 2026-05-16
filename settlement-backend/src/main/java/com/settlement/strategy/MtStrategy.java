@@ -4,7 +4,11 @@ import com.prowidesoftware.swift.model.SwiftMessage;
 import com.prowidesoftware.swift.model.SwiftTagListBlock;
 import com.prowidesoftware.swift.model.Tag;
 import com.prowidesoftware.swift.model.field.*;
+import com.prowidesoftware.swift.model.mt.AbstractMT;
+import com.prowidesoftware.swift.model.mt.mt5xx.MT540;
 import com.prowidesoftware.swift.model.mt.mt5xx.MT541;
+import com.prowidesoftware.swift.model.mt.mt5xx.MT542;
+import com.prowidesoftware.swift.model.mt.mt5xx.MT543;
 import com.settlement.canonical.CanonicalSettlement;
 import com.settlement.canonical.CanonicalStatusAdvice;
 import com.settlement.canonical.CanonicalStatusAdvice.StatusOutcome;
@@ -46,7 +50,7 @@ public class MtStrategy implements SwiftMessageStrategy {
 
     @Override
     public String buildSettlementInstruction(CanonicalSettlement settlement) {
-        MT541 mt = new MT541();
+        AbstractMT mt = createSettlementMessage(settlement);
 
         mt.setSender(padBic(settlement.instructingParty().bic()));
         mt.setReceiver(padBic(settlement.counterparty().bic()));
@@ -63,11 +67,15 @@ public class MtStrategy implements SwiftMessageStrategy {
         mt.addField(new Field35B("ISIN " + settlement.isin()));
         mt.addField(new Field36B()
                 .setQualifier(SwiftConst.SETT)
-                .setQuantityTypeCode(SwiftConst.UNIT)
+                .setQuantityTypeCode(SwiftConst.FAMT)
                 .setQuantity(settlement.quantity().toPlainString()));
 
         mt.addField(new Field95P()
-                .setQualifier(SwiftConst.DEAG)
+                .setQualifier(SwiftConst.PSET)
+                .setIdentifierCode("HKMAHKHCXXX"));
+        mt.addField(new Field95P()
+                .setQualifier(settlement.direction() == SettlementDirection.RECEIVE
+                        ? SwiftConst.DEAG : SwiftConst.REAG)
                 .setIdentifierCode(padBic(settlement.counterparty().bic())));
         mt.addField(new Field97A()
                 .setQualifier(SwiftConst.SAFE)
@@ -80,7 +88,21 @@ public class MtStrategy implements SwiftMessageStrategy {
 
     @Override
     public String getOutboundMessageType(CanonicalSettlement settlement) {
-        return "MT541";
+        if (settlement.direction() == SettlementDirection.RECEIVE) {
+            return (settlement.paymentType() == PaymentType.FREE_OF_PAYMENT) ? "MT540" : "MT541";
+        } else {
+            return (settlement.paymentType() == PaymentType.FREE_OF_PAYMENT) ? "MT542" : "MT543";
+        }
+    }
+
+    private AbstractMT createSettlementMessage(CanonicalSettlement settlement) {
+        return switch (getOutboundMessageType(settlement)) {
+            case "MT540" -> new MT540();
+            case "MT541" -> new MT541();
+            case "MT542" -> new MT542();
+            case "MT543" -> new MT543();
+            default -> throw new IllegalArgumentException("Unsupported MT settlement type");
+        };
     }
 
     @Override
@@ -157,10 +179,24 @@ public class MtStrategy implements SwiftMessageStrategy {
                     ? stripBicPadding(swiftMsg.getBlock1().getLogicalTerminal())
                     : "UNKNOWN";
 
+            SettlementDirection direction = SettlementDirection.RECEIVE;
+            PaymentType paymentType = PaymentType.AGAINST_PAYMENT;
+
+            String msgType = swiftMsg.getType();
+            if (msgType != null) {
+                switch (msgType) {
+                    case "540" -> { direction = SettlementDirection.RECEIVE; paymentType = PaymentType.FREE_OF_PAYMENT; }
+                    case "541" -> { direction = SettlementDirection.RECEIVE; paymentType = PaymentType.AGAINST_PAYMENT; }
+                    case "542" -> { direction = SettlementDirection.DELIVER; paymentType = PaymentType.AGAINST_PAYMENT; }
+                    case "543" -> { direction = SettlementDirection.DELIVER; paymentType = PaymentType.FREE_OF_PAYMENT; }
+                    default -> {} // keep defaults
+                }
+            }
+
             return new CanonicalSettlement(
                     tradeRef, isin, settlementDate, quantity,
-                    SettlementDirection.RECEIVE,
-                    PaymentType.AGAINST_PAYMENT,
+                    direction,
+                    paymentType,
                     PartyInfo.ofBic(senderBic),
                     PartyInfo.ofBic(counterpartyBic != null ? counterpartyBic : "UNKNOWN"),
                     safekeepingAccount,

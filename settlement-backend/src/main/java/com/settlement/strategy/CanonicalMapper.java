@@ -20,13 +20,15 @@ public class CanonicalMapper {
                 ? SettlementDirection.RECEIVE
                 : SettlementDirection.DELIVER;
 
+        PaymentType paymentType = resolvePaymentType(instruction.getPaymentType());
+
         return new CanonicalSettlement(
                 instruction.getTradeRef(),
                 instruction.getIsin(),
                 instruction.getSettlementDate(),
                 instruction.getQuantity(),
                 direction,
-                PaymentType.AGAINST_PAYMENT,
+                paymentType,
                 PartyInfo.ofBic(SENDER_BIC),
                 PartyInfo.ofBic(instruction.getBicCode()),
                 instruction.getAccountId(),
@@ -34,5 +36,16 @@ public class CanonicalMapper {
                 null,
                 null
         );
+    }
+
+    private PaymentType resolvePaymentType(String paymentTypeStr) {
+        if (paymentTypeStr == null || paymentTypeStr.isBlank()) {
+            return PaymentType.AGAINST_PAYMENT;
+        }
+        try {
+            return PaymentType.valueOf(paymentTypeStr);
+        } catch (IllegalArgumentException e) {
+            return PaymentType.AGAINST_PAYMENT;
+        }
     }
 }

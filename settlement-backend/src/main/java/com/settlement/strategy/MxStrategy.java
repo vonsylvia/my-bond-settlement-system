@@ -47,6 +47,9 @@ public class MxStrategy implements SwiftMessageStrategy {
         ReceiveDelivery1Code movementType = (settlement.direction() == SettlementDirection.RECEIVE)
                 ? ReceiveDelivery1Code.RECE
                 : ReceiveDelivery1Code.DELI;
+        DeliveryReceiptType2Code paymentType = (settlement.paymentType() == PaymentType.FREE_OF_PAYMENT)
+                ? DeliveryReceiptType2Code.FREE
+                : DeliveryReceiptType2Code.APMT;
 
         mx.setSctiesSttlmTxInstr(
                 new SecuritiesSettlementTransactionInstructionV09()
@@ -54,7 +57,7 @@ public class MxStrategy implements SwiftMessageStrategy {
                         .setSttlmTpAndAddtlParams(
                                 new SettlementTypeAndAdditionalParameters19()
                                         .setSctiesMvmntTp(movementType)
-                                        .setPmt(DeliveryReceiptType2Code.APMT)
+                                        .setPmt(paymentType)
                         )
                         .setTradDtls(
                                 new SecuritiesTradeDetails97()
