@@ -797,6 +797,39 @@ Matching Engine (separate MATCHING_INSTRUCTION table):
 | `GET` | `/api/settlement/{tradeRef}/messages` | Get all SWIFT messages for an instruction |
 | `POST` | `/api/settlement/{tradeRef}/retry` | Manual retry for FAILED instructions |
 
+### Participant Open API
+
+The Open API is a system-to-system intake channel that models how a CMU/CSD participant can submit settlement instructions without using the screen terminal or SWIFT channel directly. In this local demo, participant identity is supplied by `X-Participant-Id`; production-grade deployments should replace this with mTLS, OAuth/client credentials, request signing, nonce/timestamp replay protection, and account-level entitlements.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/api/open/settlement-instructions` | Submit a participant instruction asynchronously |
+| `GET` | `/api/open/settlement-instructions?clientReference=` | Query a participant instruction by client reference |
+
+Idempotency is enforced by `X-Participant-Id + clientReference`. Replaying the same payload returns the existing instruction; reusing the same client reference with a different payload returns `422`.
+
+Example:
+
+```bash
+curl -X POST http://localhost:9080/settlement/api/open/settlement-instructions \
+  -H "Content-Type: application/json" \
+  -H "X-Participant-Id: BANKA" \
+  -d '{
+    "clientReference": "BANKA-20260516-0001",
+    "isin": "US0378331005",
+    "quantity": 1000000.00,
+    "direction": "BUY",
+    "counterparty": "Goldman Sachs",
+    "bicCode": "GOLDUS33XXX",
+    "accountId": "ACC-001",
+    "settlementDate": "2026-05-18",
+    "preferredStandard": "MT",
+    "currency": "HKD",
+    "settlementAmount": 998750.25,
+    "paymentType": "AGAINST_PAYMENT"
+  }'
+```
+
 ### Trade Matching (Pre-Settlement)
 
 | Method | Path | Description |
@@ -856,6 +889,21 @@ Matching Engine (separate MATCHING_INSTRUCTION table):
 | `currency` | No | `HKD` / `USD` / `EUR` / `CNY` — settlement currency |
 | `settlementAmount` | No | Cash amount for DVP instructions |
 | `paymentType` | No | `AGAINST_PAYMENT` (DVP) or `FREE_OF_PAYMENT` (FOP) |
+
+**Open API persistence:**
+
+Existing Oracle databases need the Open API columns added once:
+
+```sql
+ALTER TABLE SETTLEMENT_INSTRUCTION ADD (
+  PARTICIPANT_ID VARCHAR2(50),
+  CLIENT_REFERENCE VARCHAR2(100),
+  OPEN_API_REQUEST_HASH VARCHAR2(64)
+);
+
+ALTER TABLE SETTLEMENT_INSTRUCTION
+  ADD CONSTRAINT UK_OPEN_API_CLIENT_REF UNIQUE (PARTICIPANT_ID, CLIENT_REFERENCE);
+```
 
 **MDB test** (`POST /api/mq/test-mdb`):
 

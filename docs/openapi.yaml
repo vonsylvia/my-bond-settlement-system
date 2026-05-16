@@ -134,6 +134,97 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /api/open/settlement-instructions:
+    post:
+      summary: Submit a settlement instruction through the participant Open API
+      description: |
+        Accepts a participant-submitted settlement instruction for asynchronous processing.
+        The tuple `X-Participant-Id + clientReference` is treated as an idempotency key.
+        Replaying the same payload returns the existing instruction; replaying the same
+        client reference with a different payload returns a business error.
+      operationId: submitOpenApiSettlementInstruction
+      parameters:
+        - name: X-Participant-Id
+          in: header
+          required: true
+          schema:
+            type: string
+            maxLength: 50
+          description: Participant/member identifier. Demo identity header; production should use mTLS/OAuth/signing.
+          example: BANKA
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OpenApiSettlementRequest'
+            example:
+              clientReference: "BANKA-20260516-0001"
+              isin: "US0378331005"
+              settlementDate: "2026-05-18"
+              quantity: 1000000.00
+              counterparty: "Goldman Sachs"
+              bicCode: "GOLDUS33XXX"
+              direction: "BUY"
+              accountId: "ACC-001"
+              preferredStandard: "MT"
+              currency: "HKD"
+              settlementAmount: 998750.25
+              paymentType: "AGAINST_PAYMENT"
+      responses:
+        '202':
+          description: Instruction accepted, or idempotent replay returned the existing instruction
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenApiSettlementResponse'
+        '400':
+          description: Missing header or validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Duplicate client reference with a different payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+    get:
+      summary: Query a participant Open API instruction by client reference
+      operationId: getOpenApiSettlementInstruction
+      parameters:
+        - name: X-Participant-Id
+          in: header
+          required: true
+          schema:
+            type: string
+            maxLength: 50
+          description: Participant/member identifier
+          example: BANKA
+        - name: clientReference
+          in: query
+          required: true
+          schema:
+            type: string
+            maxLength: 100
+          description: Participant-supplied idempotency/business reference
+          example: BANKA-20260516-0001
+      responses:
+        '200':
+          description: Open API settlement instruction status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenApiSettlementResponse'
+        '404':
+          description: Instruction not found for this participant and client reference
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /api/holdings:
     get:
       summary: Get bond holdings
@@ -535,6 +626,35 @@ components:
           enum: [MT, MX]
           description: Preferred SWIFT messaging standard (defaults to MT if omitted)
           example: "MT"
+        currency:
+          type: string
+          enum: [HKD, USD, EUR, CNY]
+          description: Settlement currency
+          example: "HKD"
+        settlementAmount:
+          type: number
+          format: decimal
+          minimum: 0
+          description: Cash amount for DvP settlement
+          example: 998750.25
+        paymentType:
+          type: string
+          enum: [AGAINST_PAYMENT, FREE_OF_PAYMENT]
+          description: DvP/FoP settlement type
+          example: "AGAINST_PAYMENT"
+
+    OpenApiSettlementRequest:
+      allOf:
+        - $ref: '#/components/schemas/SettlementRequest'
+        - type: object
+          required:
+            - clientReference
+          properties:
+            clientReference:
+              type: string
+              maxLength: 100
+              description: Participant-supplied idempotency and business reference
+              example: "BANKA-20260516-0001"
 
     SettlementResponse:
       type: object
@@ -585,6 +705,32 @@ components:
         updatedAt:
           type: string
           format: date-time
+
+    OpenApiSettlementResponse:
+      type: object
+      properties:
+        instructionId:
+          type: string
+          description: Internal settlement trade reference
+          example: "TR-BE3F5129-89B"
+        participantId:
+          type: string
+          example: "BANKA"
+        clientReference:
+          type: string
+          example: "BANKA-20260516-0001"
+        status:
+          type: string
+          enum: [PENDING, SUBMITTING, SENT, MATCHED, FAILED, RETRYING, CANCELLED, DVP_LOCKED]
+          example: "SENT"
+        acceptedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        settlement:
+          $ref: '#/components/schemas/SettlementResponse'
 
     HoldingResponse:
       type: object

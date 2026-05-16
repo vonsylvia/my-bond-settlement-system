@@ -21,7 +21,11 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 @Service
@@ -60,6 +64,33 @@ public class SettlementService {
      */
     @Transactional
     public SettlementInstruction submitInstruction(SettlementRequest request) {
+        return createInstruction(request, null, null, null);
+    }
+
+    @Transactional
+    public SettlementInstruction submitOpenApiInstruction(String participantId, String clientReference,
+                                                          SettlementRequest request) {
+        String normalizedParticipantId = participantId == null ? null : participantId.trim();
+        String normalizedClientReference = clientReference == null ? null : clientReference.trim();
+        String requestHash = hashOpenApiRequest(normalizedParticipantId, normalizedClientReference, request);
+
+        return instructionDao.findByParticipantAndClientReference(
+                        normalizedParticipantId, normalizedClientReference)
+                .map(existing -> {
+                    if (!Objects.equals(existing.getOpenApiRequestHash(), requestHash)) {
+                        throw new BusinessException("Duplicate clientReference with different instruction payload: "
+                                + normalizedClientReference);
+                    }
+                    log.info("Idempotent Open API replay: participantId={}, clientReference={}, tradeRef={}",
+                            normalizedParticipantId, normalizedClientReference, existing.getTradeRef());
+                    return existing;
+                })
+                .orElseGet(() -> createInstruction(
+                        request, normalizedParticipantId, normalizedClientReference, requestHash));
+    }
+
+    private SettlementInstruction createInstruction(SettlementRequest request, String participantId,
+                                                    String clientReference, String requestHash) {
         String tradeRef = generateTradeRef();
 
         MessageStandard standard = (request.getPreferredStandard() != null
@@ -75,6 +106,9 @@ public class SettlementService {
 
         SettlementInstruction instruction = new SettlementInstruction();
         instruction.setTradeRef(tradeRef);
+        instruction.setParticipantId(participantId);
+        instruction.setClientReference(clientReference);
+        instruction.setOpenApiRequestHash(requestHash);
         instruction.setIsin(request.getIsin());
         instruction.setSettlementDate(request.getSettlementDate());
         instruction.setQuantity(request.getQuantity());
@@ -101,11 +135,12 @@ public class SettlementService {
         swiftMessageDao.save(primaryMsg);
 
         auditLogDao.save(new AuditLog(tradeRef, AuditEventType.INSTRUCTION_CREATED,
-                "Instruction saved, async XA processing queued. ISIN="
+                auditDetailPrefix(participantId, clientReference)
+                        + "Instruction saved, async XA processing queued. ISIN="
                         + request.getIsin() + " QTY=" + request.getQuantity()));
 
-        log.info("Settlement instruction created: tradeRef={}, ISIN={}, direction={}, standard={} — async send queued",
-                tradeRef, request.getIsin(), request.getDirection(), standard);
+        log.info("Settlement instruction created: tradeRef={}, participantId={}, clientReference={}, ISIN={}, direction={}, standard={} — async send queued",
+                tradeRef, participantId, clientReference, request.getIsin(), request.getDirection(), standard);
 
         scheduleAfterCommit(tradeRef);
 
@@ -117,6 +152,13 @@ public class SettlementService {
         return instructionDao.findByTradeRef(tradeRef)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Settlement instruction not found: " + tradeRef));
+    }
+
+    @Transactional
+    public SettlementInstruction findOpenApiInstruction(String participantId, String clientReference) {
+        return instructionDao.findByParticipantAndClientReference(participantId.trim(), clientReference.trim())
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "Open API instruction not found: " + clientReference));
     }
 
     @Transactional
@@ -196,5 +238,46 @@ public class SettlementService {
 
     private String generateTradeRef() {
         return "TR-" + UUID.randomUUID().toString().substring(0, 12).toUpperCase();
+    }
+
+    private String auditDetailPrefix(String participantId, String clientReference) {
+        if (participantId == null || clientReference == null) {
+            return "";
+        }
+        return "Open API participantId=" + participantId
+                + " clientReference=" + clientReference + ". ";
+    }
+
+    private String hashOpenApiRequest(String participantId, String clientReference,
+                                      SettlementRequest request) {
+        String material = String.join("|",
+                nullToEmpty(participantId),
+                nullToEmpty(clientReference),
+                nullToEmpty(request.getIsin()),
+                Objects.toString(request.getSettlementDate(), ""),
+                Objects.toString(request.getQuantity(), ""),
+                nullToEmpty(request.getCounterparty()),
+                nullToEmpty(request.getBicCode()),
+                nullToEmpty(request.getDirection()),
+                nullToEmpty(request.getAccountId()),
+                nullToEmpty(request.getPreferredStandard()),
+                nullToEmpty(request.getCurrency()),
+                Objects.toString(request.getSettlementAmount(), ""),
+                nullToEmpty(request.getPaymentType()));
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(material.getBytes(StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder(hash.length * 2);
+            for (byte b : hash) {
+                hex.append(String.format("%02x", b));
+            }
+            return hex.toString();
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 digest is not available", e);
+        }
+    }
+
+    private String nullToEmpty(String value) {
+        return value == null ? "" : value.trim();
     }
 }

@@ -17,6 +17,15 @@ public class SettlementInstruction {
     @Column(name = "TRADE_REF", nullable = false, unique = true, length = 50)
     private String tradeRef;
 
+    @Column(name = "PARTICIPANT_ID", length = 50)
+    private String participantId;
+
+    @Column(name = "CLIENT_REFERENCE", length = 100)
+    private String clientReference;
+
+    @Column(name = "OPEN_API_REQUEST_HASH", length = 64)
+    private String openApiRequestHash;
+
     @Column(name = "ISIN", nullable = false, length = 12)
     private String isin;
 
@@ -99,6 +108,30 @@ public class SettlementInstruction {
 
     public void setTradeRef(String tradeRef) {
         this.tradeRef = tradeRef;
+    }
+
+    public String getParticipantId() {
+        return participantId;
+    }
+
+    public void setParticipantId(String participantId) {
+        this.participantId = participantId;
+    }
+
+    public String getClientReference() {
+        return clientReference;
+    }
+
+    public void setClientReference(String clientReference) {
+        this.clientReference = clientReference;
+    }
+
+    public String getOpenApiRequestHash() {
+        return openApiRequestHash;
+    }
+
+    public void setOpenApiRequestHash(String openApiRequestHash) {
+        this.openApiRequestHash = openApiRequestHash;
     }
 
     public String getIsin() {
