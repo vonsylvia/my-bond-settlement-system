@@ -98,6 +98,12 @@ class DvpSettlementServiceTest {
         SettlementInstruction instruction = createBuyInstruction();
         instruction.setStatus(InstructionStatus.DVP_LOCKED);
         when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
+        BondHolding sellerHolding = new BondHolding();
+        sellerHolding.setAccountId("GOLDUS33XXX");
+        sellerHolding.setIsin("US0378331005");
+        sellerHolding.setQuantity(new BigDecimal("2000000.00"));
+        when(holdingDao.findByAccountAndIsinForUpdate("GOLDUS33XXX", "US0378331005"))
+                .thenReturn(Optional.of(sellerHolding));
         when(holdingDao.findByAccountAndIsinForUpdate("ACC-001", "US0378331005"))
                 .thenReturn(Optional.empty());
         when(holdingDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -107,8 +113,20 @@ class DvpSettlementServiceTest {
         assertThat(instruction.getStatus()).isEqualTo(InstructionStatus.MATCHED);
         assertThat(instruction.isFinal()).isTrue();
         assertThat(instruction.getFinalityTimestamp()).isNotNull();
-        verify(holdingDao).save(any(BondHolding.class));
-        verify(movementDao).save(any(SecurityMovement.class));
+        verify(holdingDao, times(2)).save(any(BondHolding.class));
+        verify(movementDao, times(2)).save(any(SecurityMovement.class));
+        verify(chatsGateway).releaseFunds("GOLDUS33XXX", "HKD", new BigDecimal("5000000.00"), "TR-DVP001");
+    }
+
+    @Test
+    void completeDvp_shouldRejectUnlessLocked() {
+        SettlementInstruction instruction = createBuyInstruction();
+
+        assertThatThrownBy(() -> dvpService.completeDvp(instruction))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("DVP_LOCKED");
+
+        verify(holdingDao, never()).save(any());
     }
 
     @Test

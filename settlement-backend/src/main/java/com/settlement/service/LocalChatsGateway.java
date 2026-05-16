@@ -61,13 +61,8 @@ public class LocalChatsGateway implements ChatsGateway {
     @Override
     @Transactional
     public void releaseFunds(String accountId, String currency, BigDecimal amount, String tradeRef) {
-        Optional<CashAccount> opt = cashAccountDao.findByAccountAndCurrencyForUpdate(accountId, currency);
-        if (opt.isEmpty()) {
-            log.warn("Cannot release funds — cash account not found: account={}, currency={}", accountId, currency);
-            return;
-        }
-
-        CashAccount account = opt.get();
+        CashAccount account = cashAccountDao.findByAccountAndCurrencyForUpdate(accountId, currency)
+                .orElseGet(() -> cashAccountDao.save(new CashAccount(accountId, currency)));
         BigDecimal newBalance = account.getBalance().add(amount);
         account.setBalance(newBalance);
         cashAccountDao.save(account);

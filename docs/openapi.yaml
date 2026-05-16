@@ -270,8 +270,8 @@ paths:
     get:
       summary: Get SWIFT messages for a settlement instruction
       description: |
-        Returns all SWIFT messages (outbound and inbound, both original and translated copies)
-        associated with a given trade reference. Messages are ordered by creation time.
+        Returns all SWIFT messages associated with a given trade reference.
+        Messages are ordered by creation time.
       operationId: getMessages
       parameters:
         - name: tradeRef

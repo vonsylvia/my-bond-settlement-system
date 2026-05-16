@@ -1,25 +1,24 @@
 # Bond Settlement System
 
-A complete SWIFT bond settlement system built for IBM WebSphere + Oracle environment.
+A SWIFT bond settlement workflow system built for IBM WebSphere + Oracle environment.
 
 ## Architecture
 
-- **Frontend**: Vue.js 3 + Vite + Axios — Pre-Settlement (Trade Matching) / Settlement (SWIFT Direct, Monitor, DVP, Partial) / Reference (Holdings, Counterparties)
+- **Frontend**: Vue.js 3 + Vite + Axios — Pre-Settlement (Trade Matching) / Settlement (SWIFT Direct, Monitor, DVP) / Reference (Holdings, Counterparties)
 - **Backend**: Spring MVC 6 REST API
 - **Settlement Engine**:
   - **DVP (Delivery vs Payment)**: BIS Model 1 real-time DVP with CHATS RTGS abstraction — simultaneous securities and cash settlement (PFMI Principle 12)
   - **Matching Engine**: Bilateral instruction matching — buy/sell counterparties submit independently; engine auto-matches on ISIN + date + direction + BIC + quantity/amount tolerance
-  - **Partial Settlement**: Instruction shaping (splitting large trades into smaller batches) with `PARTIALLY_SETTLED` tracking
   - **Settlement Finality**: PFMI Principle 8 — `finalityTimestamp` and immutability flag prevent post-settlement modification
   - **Multi-currency**: HKD / USD / EUR / CNY support throughout the data model
-- **SWIFT Messaging**: Dual-standard support (MT and MX) with automatic MT↔MX translation
+- **SWIFT Messaging**: Dual-standard support (MT and MX) with explicit MT↔MX translation endpoints
   - **MT (FIN)**: Prowide Core — MT540-543 (send) / MT548 (receive)
   - **MX (ISO 20022)**: Prowide ISO 20022 — sese.023/025/026 (send) / sese.024 (receive)
-  - **MT↔MX Translation**: Automatic dual-format storage + counterparty-based routing
+  - **MT↔MX Translation**: On-demand translation API using the canonical data model
   - **Strategy Pattern**: `SwiftMessageStrategy` interface with `MtStrategy` / `MxStrategy` implementations
   - **Canonical Data Model**: Format-independent `CanonicalSettlement` / `CanonicalStatusAdvice` decouples business logic from message formats
   - **Counterparty Routing**: `COUNTERPARTY_CAPABILITY` registry drives send-format selection (MT_ONLY / MX_ONLY / DUAL)
-  - **Message Type Coverage**: MT540 (RFP), MT541 (RAP), MT542 (DAP), MT543 (DFP), MT548 (Status), MT535 (Holdings), MT536 (Transactions), MT564/566 (Corporate Actions), sese.023/024/025/026, sese.002/017, seev.031/036
+  - **Message Type Coverage**: MT540 (RFP), MT541 (RAP), MT542 (DFP), MT543 (DAP), MT548 (Status), MT535 (Holdings), MT536 (Transactions), MT564/566 (Corporate Actions), sese.023/024/025/026, sese.002/017, seev.031/036
 - **Message Queue**: IBM MQ via JMS
   - **Sending**: Spring JmsTemplate with application-managed MQ client connection
   - **Receiving**: Message-Driven EJB (MDB) via JCA activation spec on IBM MQ Resource Adapter
@@ -101,10 +100,8 @@ sequenceDiagram
         REC->>DB: Save inbound message to SWIFT_MESSAGE
         REC->>DB: Find instruction by tradeRef
         alt Status = MATCHED
-            REC->>DB: Update status → MATCHED, set finality
-            REC->>DB: Update BondHolding position (authoritative)
-            REC->>DB: Append SecurityMovement audit entry (CREDIT/DEBIT)
-            REC->>DB: Audit log: SETTLEMENT_MATCHED + SETTLEMENT_FINALIZED
+            REC->>DB: Update status → MATCHED
+            REC->>DB: Audit log: SETTLEMENT_MATCHED
         else Status = FAILED
             REC->>DB: Update status → FAILED
         else Status = UNKNOWN (unparseable)
@@ -167,31 +164,6 @@ sequenceDiagram
         DVP->>CHATS: releaseFunds(accountId, currency, amount)
         DVP->>DB: Update status → FAILED, restore CashAccount
     end
-```
-
-### Flow 3: Partial Settlement (Shaping)
-
-```mermaid
-sequenceDiagram
-    actor Ops as Operations
-    participant UI as Vue.js Frontend
-    participant PS as PartialSettlement<br/>Service
-    participant DB as Oracle Database
-
-    Ops->>UI: Shape large instruction into batches
-    UI->>PS: POST /api/partial-settlement/{id}/shape?batchSize=50000000
-    PS->>DB: Create N PartialSettlement splits (PENDING)
-    PS->>DB: Update parent → PARTIALLY_SETTLED
-    PS-->>UI: List of splits with amounts
-
-    loop For each split
-        Ops->>UI: Mark split as settled
-        UI->>PS: POST /api/partial-settlement/split/{partialId}/complete
-        PS->>DB: Update split → SETTLED
-        PS->>DB: Audit log: PARTIAL_SETTLED
-    end
-
-    Note over PS,DB: When all splits SETTLED → parent instruction fully settled
 ```
 
 ### Component Architecture
@@ -319,6 +291,10 @@ curl -X POST http://localhost:9080/settlement/api/matching \
 curl http://localhost:9080/settlement/api/holdings
 curl http://localhost:9080/settlement/api/dvp/cash-accounts
 ```
+
+Current REST paths:
+- Settlement list endpoint is `GET /settlement/api/settlement`
+- MQ health endpoint is `GET /settlement/api/mq/health`
 
 ### 6. Build frontend (optional)
 
@@ -448,7 +424,6 @@ my-bond-settlement-system/
 │       │   ├── SettlementController.java    # Settlement CRUD + messages
 │       │   ├── MatchingController.java      # Bilateral matching (submit/retry/cancel/list)
 │       │   ├── DvpController.java           # DVP operations (lock/complete/rollback + cash accounts)
-│       │   ├── PartialSettlementController.java # Partial settlement (shape/complete/splits)
 │       │   ├── CounterpartyController.java  # Counterparty capability CRUD
 │       │   ├── TranslationController.java   # MT↔MX translation API
 │       │   └── MqConnectivityController.java # MQ health & MDB test endpoints
@@ -464,16 +439,15 @@ my-bond-settlement-system/
 │       │   ├── SettlementService.java       # Settlement orchestration
 │       │   ├── DvpSettlementService.java    # BIS Model 1 DVP (lock → reserve → complete)
 │       │   ├── MatchingEngineService.java   # Bilateral matching with tolerance
-│       │   ├── PartialSettlementService.java # Instruction shaping & split tracking
 │       │   ├── ChatsGateway.java            # CHATS RTGS interface abstraction
 │       │   ├── LocalChatsGateway.java       # Local CHATS implementation
 │       │   └── MessageTypeResolver.java     # SWIFT message type resolution
 │       ├── jms/SwiftMessageSender.java      # JMS sender (MT/MX agnostic)
 │       ├── reconcile/
-│       │   ├── ReconciliationService.java       # MT548/sese.024 processing & position updates
+│       │   ├── ReconciliationService.java       # MT548/sese.024 status processing
 │       │   └── PositionReconciliationService.java # Incremental & daily-close reconciliation
-│       ├── dao/                             # Data access (JPA) — incl. CashAccount, Matching, Partial
-│       ├── entity/                          # JPA entities — incl. CashAccount, MatchingInstruction, PartialSettlement
+│       ├── dao/                             # Data access (JPA) — incl. CashAccount, Matching
+│       ├── entity/                          # JPA entities — incl. CashAccount, MatchingInstruction
 │       └── dto/                             # Request/Response DTOs (with currency, amount, finality fields)
 ├── settlement-ejb/                  # EJB module
 │   └── src/main/
@@ -486,14 +460,13 @@ my-bond-settlement-system/
 └── settlement-frontend/             # Vue.js 3 frontend
     └── src/
         ├── App.vue                  # Navigation: Pre-Settlement | Settlement | Reference
-        ├── main.js                  # Vue Router (6 routes)
-        ├── api/settlement.js        # API module (settlement, matching, DVP, partial)
+        ├── main.js                  # Vue Router
+        ├── api/settlement.js        # API module (settlement, matching, DVP)
         ├── components/
-        │   └── StatusBadge.vue      # Status display (incl. DVP_LOCKED, PARTIALLY_SETTLED, finality mark)
+        │   └── StatusBadge.vue      # Status display (incl. DVP_LOCKED, finality mark)
         └── views/
             ├── MatchingView.vue     # Trade Matching — bilateral submit + list + retry/cancel
             ├── DvpView.vue          # DVP operations — lock/complete/rollback + cash accounts
-            ├── PartialSettlementView.vue # Partial settlement — shape + split tracking
             ├── SettlementForm.vue   # SWIFT Direct — submit to SWIFT network
             ├── SettlementList.vue   # Settlement Monitor — track lifecycle
             └── HoldingsView.vue     # Bond holdings dashboard
@@ -506,7 +479,7 @@ my-bond-settlement-system/
 | Table | Purpose |
 |-------|---------|
 | `SETTLEMENT_INSTRUCTION` | Business entity — format-agnostic settlement instruction with DVP/finality fields (`CURRENCY`, `SETTLEMENT_AMOUNT`, `PAYMENT_TYPE`, `FINALITY_TIMESTAMP`, `IS_FINAL`) |
-| `SWIFT_MESSAGE` | All outbound/inbound SWIFT messages with `IS_TRANSLATED` flag |
+| `SWIFT_MESSAGE` | Outbound/inbound SWIFT messages; translated messages are only stored when explicitly created |
 | `MESSAGE_TYPE_REGISTRY` | Metadata registry mapping MT ↔ MX equivalents (MT540-543, MT548, MT535/536, MT564/566, sese.023-026, sese.002/017, seev.031/036) |
 | `COUNTERPARTY_CAPABILITY` | Counterparty MT/MX routing preferences with `EFFECTIVE_DATE` logic |
 
@@ -523,20 +496,14 @@ my-bond-settlement-system/
 |-------|---------|
 | `MATCHING_INSTRUCTION` | Bilateral matching instructions — buyer and seller each submit; engine auto-matches on ISIN + date + direction + BIC + tolerance |
 
-### Partial Settlement
-
-| Table | Purpose |
-|-------|---------|
-| `PARTIAL_SETTLEMENT` | Tracks individual splits from shaping large instructions into smaller batches |
-
 ### Position Management
 
 | Table | Role | Mutability |
 |-------|------|------------|
-| `BOND_HOLDING` | Authoritative position — source of truth for current balances | Updated on DVP complete or SWIFT MATCHED |
+| `BOND_HOLDING` | Authoritative position — source of truth for current balances | Updated on DVP completion/book-entry settlement |
 | `SECURITY_MOVEMENT` | Immutable audit journal of every position change | Append-only |
 | `EOD_POSITION_SNAPSHOT` | End-of-day per-position snapshot — reconciliation baseline | Daily insert |
-| `AUDIT_LOG` | Full audit trail with event types for DVP, matching, finality, partial settlement | Append-only |
+| `AUDIT_LOG` | Full audit trail with event types for DVP, matching, finality | Append-only |
 
 ## Position Management
 
@@ -550,7 +517,7 @@ Bond positions follow the architecture used by large Central Securities Deposito
 
 ### How It Works
 
-When a settlement is confirmed — either via SWIFT reply (MT548 MATCHED / sese.024 MTCHD) or DVP completion — the system performs two writes in a single transaction:
+When a settlement reaches book-entry completion, such as DVP completion, the system performs two writes in a single transaction:
 
 1. **Update `BondHolding`** — the authoritative position for the `(account, isin)` pair, protected by a pessimistic lock (`SELECT FOR UPDATE`) to serialise concurrent updates
 2. **Append a `SecurityMovement`** — an immutable audit entry recording the CREDIT (BUY) or DEBIT (SELL), the quantity, and the resulting balance (`balanceAfter`)
@@ -649,13 +616,11 @@ SWIFT Message → Strategy → CanonicalStatusAdvice → Service → Entity
 | `SwiftMessageStrategy` | Interface for building/parsing messages (MT or MX) |
 | `SwiftMessageStrategyFactory` | Resolves strategy by standard; auto-detects from raw payload |
 
-### Outbound (Send MT541 / sese.023) — Dual-Format with Counterparty Routing
+### Outbound (Send MT54x / sese.023)
 
 ```
 SettlementService.submitInstruction():
     → CanonicalMapper → Strategy.build(primaryFormat) → SWIFT_MESSAGE (primary, IS_TRANSLATED=0)
-    → TranslationService.translate(primary) → SWIFT_MESSAGE (translated, IS_TRANSLATED=1)
-    [Both MT and MX versions stored for every instruction]
 
 SettlementXaExecutor.executeSettlement():
     → CounterpartyCapabilityDao.findByBicFuzzy(bic)
@@ -668,7 +633,7 @@ SettlementXaExecutor.executeSettlement():
     → JmsTemplate.send(SWIFT.SEND.QUEUE) → SWIFT Gateway
 ```
 
-### Inbound (Receive MT548 / sese.024) — Auto-Translation Archive
+### Inbound (Receive MT548 / sese.024)
 
 ```
 SWIFT Gateway → SWIFT.REPLY.QUEUE → JCA Activation Spec (container-managed)
@@ -677,8 +642,7 @@ SWIFT Gateway → SWIFT.REPLY.QUEUE → JCA Activation Spec (container-managed)
     → StrategyFactory.detectStrategy(rawMessage)  [auto-detect MT/MX]
     → Strategy.parseStatusReply() → CanonicalStatusAdvice
     → Save original inbound message (IS_TRANSLATED=0)
-    → TranslationService.translateStatusReply() → Save translated copy (IS_TRANSLATED=1)
-    → ReconciliationService updates status + holdings
+    → ReconciliationService updates instruction status
 ```
 
 ### MT↔MX Translation Service
@@ -803,7 +767,7 @@ Settlement submission follows a **two-phase async pattern** to minimize client l
 
 ```
 SWIFT Direct Path:
-  PENDING → SUBMITTING → SENT → MATCHED (+ finality)     (happy path)
+  PENDING → SUBMITTING → SENT → MATCHED                  (matched/status confirmed)
   PENDING → SUBMITTING → RETRYING → ... → FAILED          (all 3 retries failed)
   PENDING → SUBMITTING → RETRYING → SENT                  (succeeded on retry)
   FAILED  → PENDING → SUBMITTING → SENT                   (manual retry success)
@@ -812,9 +776,6 @@ DVP Path:
   PENDING → SENT → DVP_LOCKED → MATCHED (+ finality)      (DVP happy path)
   PENDING → SENT → DVP_LOCKED → FAILED                    (DVP rollback)
 
-Partial Settlement:
-  PENDING → ... → PARTIALLY_SETTLED                        (shaping splits instruction)
-  
 Matching Engine (separate MATCHING_INSTRUCTION table):
   ALLEGED → MATCHED (auto-matched with counterparty)
   ALLEGED → UNMATCHED (counterparty cancelled)
@@ -822,7 +783,7 @@ Matching Engine (separate MATCHING_INSTRUCTION table):
 ```
 
 > **Note:** During retries, the status is `RETRYING` (not `FAILED`) so API consumers can distinguish between a transient retry and a terminal failure.
-> **Note:** `MATCHED` instructions with `isFinal=true` and `finalityTimestamp` are immutable — no further status changes or modifications are permitted.
+> **Note:** `MATCHED` is not finality by itself. `isFinal=true` and `finalityTimestamp` are set only when a book-entry settlement path, such as DVP completion, finalizes the instruction.
 
 ## API Endpoints
 
@@ -855,14 +816,6 @@ Matching Engine (separate MATCHING_INSTRUCTION table):
 | `POST` | `/api/dvp/{tradeRef}/complete` | Complete DVP — transfers securities, sets MATCHED with finality |
 | `POST` | `/api/dvp/{tradeRef}/rollback` | Rollback DVP — releases reserved funds, sets FAILED |
 | `GET` | `/api/dvp/cash-accounts` | List cash accounts (optional `?accountId=` filter) |
-
-### Partial Settlement
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/partial-settlement/{instructionId}/shape` | Shape instruction into batches (optional `?batchSize=`) |
-| `POST` | `/api/partial-settlement/split/{partialId}/complete` | Mark a split as settled |
-| `GET` | `/api/partial-settlement/{instructionId}` | Get all splits for an instruction |
 
 ### Reference Data & Operations
 

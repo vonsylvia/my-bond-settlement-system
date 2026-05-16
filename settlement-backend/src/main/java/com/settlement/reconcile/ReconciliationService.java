@@ -11,15 +11,11 @@ import com.settlement.entity.*;
 import com.settlement.service.AlertWebhookService;
 import com.settlement.strategy.SwiftMessageStrategy;
 import com.settlement.strategy.SwiftMessageStrategyFactory;
-import com.settlement.translation.TranslationService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import com.settlement.exception.HoldingsValidationException;
-
-import java.math.BigDecimal;
 import java.util.Optional;
 
 /**
@@ -40,7 +36,6 @@ public class ReconciliationService implements ReconciliationHandler {
     private final ReconciliationMetrics metrics;
     private final AlertWebhookService alertService;
     private final SwiftMessageStrategyFactory strategyFactory;
-    private final TranslationService translationService;
 
     public ReconciliationService(SettlementInstructionDao instructionDao,
                                  BondHoldingDao holdingDao,
@@ -49,8 +44,7 @@ public class ReconciliationService implements ReconciliationHandler {
                                  SwiftMessageDao swiftMessageDao,
                                  ReconciliationMetrics metrics,
                                  AlertWebhookService alertService,
-                                 SwiftMessageStrategyFactory strategyFactory,
-                                 TranslationService translationService) {
+                                 SwiftMessageStrategyFactory strategyFactory) {
         this.instructionDao = instructionDao;
         this.holdingDao = holdingDao;
         this.movementDao = movementDao;
@@ -59,7 +53,6 @@ public class ReconciliationService implements ReconciliationHandler {
         this.metrics = metrics;
         this.alertService = alertService;
         this.strategyFactory = strategyFactory;
-        this.translationService = translationService;
     }
 
     @Transactional
@@ -114,8 +107,6 @@ public class ReconciliationService implements ReconciliationHandler {
         inboundMsg.setParsedReason(statusAdvice.reasonText());
         swiftMessageDao.save(inboundMsg);
 
-        storeTranslatedStatusCopy(instruction.getId(), tradeRef, rawMessage, strategy.getStandard());
-
         switch (statusAdvice.outcome()) {
             case MATCHED -> handleMatched(instruction);
             case FAILED -> handleFailed(instruction);
@@ -133,30 +124,13 @@ public class ReconciliationService implements ReconciliationHandler {
             return;
         }
 
-        try {
-            updateHoldings(instruction);
-        } catch (HoldingsValidationException e) {
-            log.error("Holdings update failed for MATCHED instruction: tradeRef={}, reason={}",
-                    instruction.getTradeRef(), e.getMessage());
-            instruction.setStatus(InstructionStatus.FAILED);
-            instruction.setFailureReason("Holdings update failed: " + e.getMessage());
-            auditLogDao.save(new AuditLog(instruction.getTradeRef(), AuditEventType.SETTLEMENT_FAILED,
-                    "MATCHED but holdings update failed: " + e.getMessage()));
-            alertService.sendUnknownStatusAlert(instruction.getTradeRef(), instruction.getIsin());
-            metrics.recordFailed();
-            return;
-        }
-
         instruction.setStatus(InstructionStatus.MATCHED);
-        instruction.setFinalityTimestamp(java.time.LocalDateTime.now());
-        instruction.setFinal(true);
         auditLogDao.save(new AuditLog(instruction.getTradeRef(), AuditEventType.SETTLEMENT_MATCHED,
-                "Settlement confirmed: ISIN=" + instruction.getIsin() +
+                "Settlement instruction matched/status confirmed: ISIN=" + instruction.getIsin() +
                 " QTY=" + instruction.getQuantity() +
                 " DIR=" + instruction.getDirection()));
-        auditLogDao.save(new AuditLog(instruction.getTradeRef(), AuditEventType.SETTLEMENT_FINALIZED,
-                "Settlement finality achieved — instruction is now immutable"));
-        log.info("Settlement MATCHED with finality: tradeRef={}", instruction.getTradeRef());
+        log.info("Settlement status MATCHED, awaiting book-entry settlement/finality: tradeRef={}",
+                instruction.getTradeRef());
         metrics.recordMatched();
     }
 
@@ -192,56 +166,6 @@ public class ReconciliationService implements ReconciliationHandler {
         alertService.sendUnknownStatusAlert(instruction.getTradeRef(), instruction.getIsin());
     }
 
-    private void updateHoldings(SettlementInstruction instruction) {
-        String accountId = instruction.getAccountId();
-        String isin = instruction.getIsin();
-        BigDecimal quantity = instruction.getQuantity();
-        String tradeRef = instruction.getTradeRef();
-
-        MovementType movementType = (instruction.getDirection() == Direction.BUY)
-                ? MovementType.CREDIT
-                : MovementType.DEBIT;
-
-        Optional<BondHolding> optHolding = holdingDao.findByAccountAndIsinForUpdate(accountId, isin);
-
-        BondHolding holding;
-        BigDecimal newBalance;
-
-        if (movementType == MovementType.CREDIT) {
-            holding = optHolding.orElseGet(() -> newHolding(accountId, isin));
-            newBalance = holding.getQuantity().add(quantity);
-        } else {
-            holding = optHolding.orElseThrow(() -> {
-                log.error("No holding record for SELL: account={}, isin={}", accountId, isin);
-                return new HoldingsValidationException(
-                        "Cannot sell: no existing holding for account=" + accountId + ", isin=" + isin);
-            });
-            newBalance = holding.getQuantity().subtract(quantity);
-            if (newBalance.compareTo(BigDecimal.ZERO) < 0) {
-                log.error("Insufficient holdings for SELL: account={}, isin={}, current={}, requested={}",
-                        accountId, isin, holding.getQuantity(), quantity);
-                throw new HoldingsValidationException("Insufficient bond holdings for settlement");
-            }
-        }
-
-        holding.setQuantity(newBalance);
-        holdingDao.save(holding);
-
-        movementDao.save(new SecurityMovement(
-                accountId, isin, movementType, quantity, newBalance, tradeRef));
-
-        log.info("Position updated: account={}, isin={}, type={}, qty={}, newBalance={}",
-                accountId, isin, movementType, quantity, newBalance);
-    }
-
-    private static BondHolding newHolding(String accountId, String isin) {
-        BondHolding h = new BondHolding();
-        h.setAccountId(accountId);
-        h.setIsin(isin);
-        h.setQuantity(BigDecimal.ZERO);
-        return h;
-    }
-
     /**
      * Only instructions that have been sent (or already matched for idempotent re-processing)
      * are eligible to receive replies. Instructions in PENDING, SUBMITTING,
@@ -253,36 +177,7 @@ public class ReconciliationService implements ReconciliationHandler {
         }
         return switch (instruction.getStatus()) {
             case SENT, MATCHED, FAILED, DVP_LOCKED -> true;
-            case PENDING, SUBMITTING, RETRYING, CANCELLED, PARTIALLY_SETTLED -> false;
+            case PENDING, SUBMITTING, RETRYING, CANCELLED -> false;
         };
-    }
-
-    /**
-     * Translates the inbound status reply to the opposite format and stores the
-     * translated copy for dual-format audit completeness.
-     */
-    private void storeTranslatedStatusCopy(Long instructionId, String tradeRef,
-                                           String rawMessage, MessageStandard sourceStandard) {
-        try {
-            TranslationService.StatusTranslationResult translated =
-                    translationService.translateStatusReply(rawMessage);
-
-            SwiftMessage translatedMsg = new SwiftMessage(
-                    instructionId, tradeRef,
-                    translated.targetStandard(), translated.targetMessageType(),
-                    MessageDirection.INBOUND, translated.translatedPayload());
-            translatedMsg.setTranslated(true);
-            translatedMsg.setParsedStatus(
-                    translated.canonical().statusCode());
-            translatedMsg.setParsedReason(
-                    translated.canonical().reasonText());
-            swiftMessageDao.save(translatedMsg);
-
-            log.debug("Inbound status translated copy stored: tradeRef={}, {} → {}",
-                    tradeRef, sourceStandard, translated.targetStandard());
-        } catch (Exception e) {
-            log.warn("Failed to translate inbound status for tradeRef={}: {}. " +
-                    "Original message is unaffected.", tradeRef, e.getMessage());
-        }
     }
 }

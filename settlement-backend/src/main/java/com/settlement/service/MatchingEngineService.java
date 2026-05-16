@@ -93,6 +93,9 @@ public class MatchingEngineService {
             if (candidate.getId().equals(instruction.getId())) {
                 continue;
             }
+            if (!instruction.getSubmitterBic().equals(candidate.getCounterpartyBic())) {
+                continue;
+            }
             if (isWithinTolerance(instruction, candidate)) {
                 return Optional.of(candidate);
             }
@@ -114,6 +117,13 @@ public class MatchingEngineService {
             if (amtDiff.compareTo(tolerance) > 0) {
                 return false;
             }
+        } else if (a.getAmount() != null || b.getAmount() != null) {
+            return false;
+        }
+
+        if (a.getCurrency() != null && b.getCurrency() != null
+                && !a.getCurrency().equals(b.getCurrency())) {
+            return false;
         }
 
         return true;

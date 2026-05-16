@@ -75,20 +75,18 @@ public class DvpSettlementService {
             return;
         }
 
-        String accountId = instruction.getAccountId();
         String currency = instruction.getCurrency();
         String tradeRef = instruction.getTradeRef();
 
-        if (instruction.getDirection() == Direction.BUY) {
-            boolean reserved = chatsGateway.reserveFunds(accountId, currency, amount, tradeRef);
-            if (!reserved) {
-                instruction.setFailureReason("DVP failed: insufficient funds for cash leg");
-                instruction.setStatus(InstructionStatus.FAILED);
-                instructionDao.save(instruction);
-                auditLogDao.save(new AuditLog(tradeRef, AuditEventType.DVP_FAILED,
-                        "Cash reservation failed: insufficient " + currency + " balance"));
-                throw new BusinessException("DVP lock failed: insufficient funds");
-            }
+        String payerAccount = cashPayerAccount(instruction);
+        boolean reserved = chatsGateway.reserveFunds(payerAccount, currency, amount, tradeRef);
+        if (!reserved) {
+            instruction.setFailureReason("DVP failed: insufficient funds for cash leg");
+            instruction.setStatus(InstructionStatus.FAILED);
+            instructionDao.save(instruction);
+            auditLogDao.save(new AuditLog(tradeRef, AuditEventType.DVP_FAILED,
+                    "Cash reservation failed: insufficient " + currency + " balance in " + payerAccount));
+            throw new BusinessException("DVP lock failed: insufficient funds");
         }
 
         instruction.setStatus(InstructionStatus.DVP_LOCKED);
@@ -107,7 +105,12 @@ public class DvpSettlementService {
     public void completeDvp(SettlementInstruction instruction) {
         String tradeRef = instruction.getTradeRef();
 
+        if (instruction.getStatus() != InstructionStatus.DVP_LOCKED) {
+            throw new BusinessException("DVP completion requires DVP_LOCKED status: " + tradeRef);
+        }
+
         updateHoldings(instruction);
+        creditCashReceiver(instruction);
 
         instruction.setStatus(InstructionStatus.MATCHED);
         instruction.setFinalityTimestamp(LocalDateTime.now());
@@ -122,45 +125,62 @@ public class DvpSettlementService {
     }
 
     private void updateHoldings(SettlementInstruction instruction) {
-        String accountId = instruction.getAccountId();
         String isin = instruction.getIsin();
         BigDecimal quantity = instruction.getQuantity();
 
-        MovementType movementType = (instruction.getDirection() == Direction.BUY)
-                ? MovementType.CREDIT
-                : MovementType.DEBIT;
+        if (instruction.getDirection() == Direction.BUY) {
+            applySecurityMovement(instruction.getBicCode(), isin, MovementType.DEBIT, quantity, instruction.getTradeRef());
+            applySecurityMovement(instruction.getAccountId(), isin, MovementType.CREDIT, quantity, instruction.getTradeRef());
+        } else {
+            applySecurityMovement(instruction.getAccountId(), isin, MovementType.DEBIT, quantity, instruction.getTradeRef());
+            applySecurityMovement(instruction.getBicCode(), isin, MovementType.CREDIT, quantity, instruction.getTradeRef());
+        }
+    }
 
+    private void applySecurityMovement(String accountId, String isin, MovementType movementType,
+                                       BigDecimal quantity, String tradeRef) {
         Optional<BondHolding> optHolding = holdingDao.findByAccountAndIsinForUpdate(accountId, isin);
 
         BondHolding holding;
         BigDecimal newBalance;
 
         if (movementType == MovementType.CREDIT) {
-            holding = optHolding.orElseGet(() -> {
-                BondHolding h = new BondHolding();
-                h.setAccountId(accountId);
-                h.setIsin(isin);
-                h.setQuantity(BigDecimal.ZERO);
-                return h;
-            });
+            holding = optHolding.orElseGet(() -> newHolding(accountId, isin));
             newBalance = holding.getQuantity().add(quantity);
         } else {
             holding = optHolding.orElseThrow(() ->
-                    new BusinessException("Cannot sell: no existing holding for account=" + accountId));
+                    new BusinessException("Cannot deliver: no existing holding for account=" + accountId));
             newBalance = holding.getQuantity().subtract(quantity);
             if (newBalance.compareTo(BigDecimal.ZERO) < 0) {
-                throw new BusinessException("Insufficient bond holdings for settlement");
+                throw new BusinessException("Insufficient bond holdings for DVP delivery");
             }
         }
 
         holding.setQuantity(newBalance);
         holdingDao.save(holding);
 
-        movementDao.save(new SecurityMovement(
-                accountId, isin, movementType, quantity, newBalance, instruction.getTradeRef()));
+        movementDao.save(new SecurityMovement(accountId, isin, movementType, quantity, newBalance, tradeRef));
 
         log.info("Holdings updated via DVP: account={}, isin={}, type={}, qty={}, newBalance={}",
                 accountId, isin, movementType, quantity, newBalance);
+    }
+
+    private static BondHolding newHolding(String accountId, String isin) {
+        BondHolding h = new BondHolding();
+        h.setAccountId(accountId);
+        h.setIsin(isin);
+        h.setQuantity(BigDecimal.ZERO);
+        return h;
+    }
+
+    private void creditCashReceiver(SettlementInstruction instruction) {
+        BigDecimal amount = instruction.getSettlementAmount();
+        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0
+                || !PaymentType.AGAINST_PAYMENT.name().equals(instruction.getPaymentType())) {
+            return;
+        }
+        chatsGateway.releaseFunds(cashReceiverAccount(instruction), instruction.getCurrency(),
+                amount, instruction.getTradeRef());
     }
 
     /**
@@ -173,10 +193,9 @@ public class DvpSettlementService {
         }
 
         BigDecimal amount = instruction.getSettlementAmount();
-        if (amount != null && amount.compareTo(BigDecimal.ZERO) > 0
-                && instruction.getDirection() == Direction.BUY) {
+        if (amount != null && amount.compareTo(BigDecimal.ZERO) > 0) {
             chatsGateway.releaseFunds(
-                    instruction.getAccountId(), instruction.getCurrency(),
+                    cashPayerAccount(instruction), instruction.getCurrency(),
                     amount, instruction.getTradeRef());
         }
 
@@ -187,5 +206,17 @@ public class DvpSettlementService {
         auditLogDao.save(new AuditLog(instruction.getTradeRef(), AuditEventType.DVP_FAILED,
                 "DVP rolled back — funds released"));
         log.info("DVP rolled back: tradeRef={}", instruction.getTradeRef());
+    }
+
+    private String cashPayerAccount(SettlementInstruction instruction) {
+        return instruction.getDirection() == Direction.BUY
+                ? instruction.getAccountId()
+                : instruction.getBicCode();
+    }
+
+    private String cashReceiverAccount(SettlementInstruction instruction) {
+        return instruction.getDirection() == Direction.BUY
+                ? instruction.getBicCode()
+                : instruction.getAccountId();
     }
 }

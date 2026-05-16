@@ -44,6 +44,8 @@ public final class SwiftConst {
     public static final String DEAG = "DEAG";
     /** Receiving Agent (:95P:) */
     public static final String REAG = "REAG";
+    /** Place of Settlement (:95P:) */
+    public static final String PSET = "PSET";
     /** Safekeeping Account (:97A:) */
     public static final String SAFE = "SAFE";
 

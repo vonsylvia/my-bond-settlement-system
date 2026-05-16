@@ -8,6 +8,5 @@ public enum InstructionStatus {
     FAILED,
     RETRYING,
     CANCELLED,
-    PARTIALLY_SETTLED,
     DVP_LOCKED
 }

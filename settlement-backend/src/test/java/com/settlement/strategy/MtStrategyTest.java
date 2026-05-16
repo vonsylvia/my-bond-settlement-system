@@ -57,6 +57,7 @@ class MtStrategyTest {
         assertThat(message).contains("US0378331005");
         assertThat(message).contains("1000000");
         assertThat(message).contains("GOLDUS33XXX");
+        assertThat(message).contains("HKMAHKHCXXX");
         assertThat(message).contains("20260515");
         assertThat(message).contains("NEWM");
     }
@@ -126,15 +127,39 @@ class MtStrategyTest {
     }
 
     @Test
+    void getOutboundMessageType_shouldMapFullMt54xFamily() {
+        assertThat(strategy.getOutboundMessageType(create(SettlementDirection.RECEIVE, PaymentType.FREE_OF_PAYMENT)))
+                .isEqualTo("MT540");
+        assertThat(strategy.getOutboundMessageType(create(SettlementDirection.RECEIVE, PaymentType.AGAINST_PAYMENT)))
+                .isEqualTo("MT541");
+        assertThat(strategy.getOutboundMessageType(create(SettlementDirection.DELIVER, PaymentType.FREE_OF_PAYMENT)))
+                .isEqualTo("MT542");
+        assertThat(strategy.getOutboundMessageType(create(SettlementDirection.DELIVER, PaymentType.AGAINST_PAYMENT)))
+                .isEqualTo("MT543");
+    }
+
+    @Test
+    void buildSettlementInstruction_shouldBuildMatchingMtEnvelopeType() {
+        assertThat(strategy.buildSettlementInstruction(create(SettlementDirection.DELIVER, PaymentType.AGAINST_PAYMENT)))
+                .contains("{2:I543");
+        assertThat(strategy.buildSettlementInstruction(create(SettlementDirection.DELIVER, PaymentType.FREE_OF_PAYMENT)))
+                .contains("{2:I542");
+    }
+
+    @Test
     void getInboundStatusType_shouldReturnMT548() {
         assertThat(strategy.getInboundStatusType()).isEqualTo("MT548");
     }
 
     private CanonicalSettlement createSample() {
+        return create(SettlementDirection.RECEIVE, PaymentType.AGAINST_PAYMENT);
+    }
+
+    private CanonicalSettlement create(SettlementDirection direction, PaymentType paymentType) {
         return new CanonicalSettlement(
                 "TR-TEST123456", "US0378331005", LocalDate.of(2026, 5, 15),
-                new BigDecimal("1000000.00"), SettlementDirection.RECEIVE,
-                PaymentType.AGAINST_PAYMENT,
+                new BigDecimal("1000000.00"), direction,
+                paymentType,
                 PartyInfo.ofBic("OWNRBICXXX"), PartyInfo.ofBic("GOLDUS33XXX"),
                 "ACC-001", null, null, null);
     }

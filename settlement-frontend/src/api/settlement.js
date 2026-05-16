@@ -70,6 +70,10 @@ export function dailyClose() {
   return api.post('/positions/daily-close')
 }
 
+export function getMqHealth() {
+  return api.get('/mq/health')
+}
+
 export const matchingApi = {
   list(params = {}) {
     return api.get('/matching', { params })
@@ -104,18 +108,5 @@ export const dvpApi = {
   cashAccounts(accountId) {
     const params = accountId ? { accountId } : {}
     return api.get('/dvp/cash-accounts', { params })
-  }
-}
-
-export const partialApi = {
-  shape(instructionId, batchSize) {
-    const params = batchSize ? { batchSize } : {}
-    return api.post(`/partial-settlement/${instructionId}/shape`, null, { params })
-  },
-  getSplits(instructionId) {
-    return api.get(`/partial-settlement/${instructionId}`)
-  },
-  completeSplit(partialId) {
-    return api.post(`/partial-settlement/split/${partialId}/complete`)
   }
 }

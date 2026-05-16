@@ -14,8 +14,8 @@ import org.springframework.stereotype.Component;
  *   <tr><th>Direction</th><th>Payment</th><th>MT</th><th>MX</th></tr>
  *   <tr><td>RECEIVE</td><td>FREE</td><td>MT540</td><td>sese.023.001.09</td></tr>
  *   <tr><td>RECEIVE</td><td>AGAINST</td><td>MT541</td><td>sese.023.001.09</td></tr>
- *   <tr><td>DELIVER</td><td>AGAINST</td><td>MT542</td><td>sese.023.001.09</td></tr>
- *   <tr><td>DELIVER</td><td>FREE</td><td>MT543</td><td>sese.023.001.09</td></tr>
+ *   <tr><td>DELIVER</td><td>FREE</td><td>MT542</td><td>sese.023.001.09</td></tr>
+ *   <tr><td>DELIVER</td><td>AGAINST</td><td>MT543</td><td>sese.023.001.09</td></tr>
  * </table>
  */
 @Component
@@ -33,7 +33,7 @@ public class MessageTypeResolver {
         if (direction == SettlementDirection.RECEIVE) {
             return (paymentType == PaymentType.FREE_OF_PAYMENT) ? "MT540" : "MT541";
         } else {
-            return (paymentType == PaymentType.AGAINST_PAYMENT) ? "MT542" : "MT543";
+            return (paymentType == PaymentType.FREE_OF_PAYMENT) ? "MT542" : "MT543";
         }
     }
 

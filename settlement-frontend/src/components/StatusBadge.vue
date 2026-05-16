@@ -29,7 +29,6 @@ export default {
         case 'RETRYING': return 'retrying'
         case 'CANCELLED': return 'cancelled'
         case 'DVP_LOCKED': return 'dvp-locked'
-        case 'PARTIALLY_SETTLED': return 'partial'
         default: return 'pending'
       }
     }
@@ -88,11 +87,6 @@ export default {
 .status-badge.dvp-locked {
   background: #ede7f6;
   color: #4527a0;
-}
-
-.status-badge.partial {
-  background: #e0f2f1;
-  color: #00695c;
 }
 
 .finality-mark {

@@ -106,7 +106,7 @@ class SettlementE2ETest {
         SettlementInstruction mockInstruction = new SettlementInstruction();
         mockInstruction.setTradeRef("TR-E2E001");
         mockInstruction.setIsin("US0378331005");
-        mockInstruction.setSettlementDate(LocalDate.of(2026, 5, 15));
+        mockInstruction.setSettlementDate(LocalDate.now().plusDays(1));
         mockInstruction.setQuantity(new BigDecimal("1000000.00"));
         mockInstruction.setCounterparty("Goldman Sachs");
         mockInstruction.setBicCode("GOLDUS33XXX");
@@ -122,7 +122,7 @@ class SettlementE2ETest {
 
         SettlementRequest settleReq = new SettlementRequest();
         settleReq.setIsin("US0378331005");
-        settleReq.setSettlementDate(LocalDate.of(2026, 5, 15));
+        settleReq.setSettlementDate(LocalDate.now().plusDays(1));
         settleReq.setQuantity(new BigDecimal("1000000.00"));
         settleReq.setCounterparty("Goldman Sachs");
         settleReq.setBicCode("GOLDUS33XXX");
@@ -176,7 +176,7 @@ class SettlementE2ETest {
         SettlementInstruction instruction = new SettlementInstruction();
         instruction.setTradeRef("TR-USD001");
         instruction.setIsin("US0378331005");
-        instruction.setSettlementDate(LocalDate.of(2026, 5, 15));
+        instruction.setSettlementDate(LocalDate.now().plusDays(1));
         instruction.setQuantity(new BigDecimal("500000.00"));
         instruction.setCounterparty("Citibank");
         instruction.setBicCode("CITIUS33XXX");
@@ -192,7 +192,7 @@ class SettlementE2ETest {
 
         SettlementRequest req = new SettlementRequest();
         req.setIsin("US0378331005");
-        req.setSettlementDate(LocalDate.of(2026, 5, 15));
+        req.setSettlementDate(LocalDate.now().plusDays(1));
         req.setQuantity(new BigDecimal("500000.00"));
         req.setCounterparty("Citibank");
         req.setBicCode("CITIUS33XXX");
@@ -217,7 +217,7 @@ class SettlementE2ETest {
         SettlementInstruction finalized = new SettlementInstruction();
         finalized.setTradeRef("TR-FINAL001");
         finalized.setIsin("US0378331005");
-        finalized.setSettlementDate(LocalDate.of(2026, 5, 15));
+        finalized.setSettlementDate(LocalDate.now().plusDays(1));
         finalized.setQuantity(new BigDecimal("1000000.00"));
         finalized.setCounterparty("Goldman Sachs");
         finalized.setBicCode("GOLDUS33XXX");
