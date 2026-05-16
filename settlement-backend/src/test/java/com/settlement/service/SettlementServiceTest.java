@@ -248,4 +248,76 @@ class SettlementServiceTest {
         assertThat(result.getStatus()).isEqualTo(InstructionStatus.PENDING);
         verify(swiftMessageDao, times(1)).save(any(SwiftMessage.class));
     }
+
+    @Test
+    void submitOpenApiInstruction_shouldStoreParticipantReferenceAndHash() {
+        when(instructionDao.findByParticipantAndClientReference("BANKA", "BANKA-REF-001"))
+                .thenReturn(Optional.empty());
+        when(strategyFactory.getStrategy(MessageStandard.MT)).thenReturn(mtStrategy);
+        when(mtStrategy.buildSettlementInstruction(any())).thenReturn("{MT541 content}");
+        when(mtStrategy.getOutboundMessageType(any())).thenReturn("MT541");
+        when(instructionDao.save(any())).thenAnswer(inv -> {
+            SettlementInstruction si = inv.getArgument(0);
+            si.setId(1L);
+            return si;
+        });
+        when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        SettlementInstruction result = settlementService.submitOpenApiInstruction(
+                "BANKA", "BANKA-REF-001", validRequest);
+
+        assertThat(result.getParticipantId()).isEqualTo("BANKA");
+        assertThat(result.getClientReference()).isEqualTo("BANKA-REF-001");
+        assertThat(result.getOpenApiRequestHash()).hasSize(64);
+        verify(instructionDao).save(any(SettlementInstruction.class));
+        verify(asyncProcessor).processSettlementAsync(result.getTradeRef());
+    }
+
+    @Test
+    void submitOpenApiInstruction_shouldReturnExistingInstruction_forIdempotentReplay() {
+        SettlementInstruction existing = new SettlementInstruction();
+        existing.setTradeRef("TR-EXISTING");
+        existing.setParticipantId("BANKA");
+        existing.setClientReference("BANKA-REF-001");
+
+        when(instructionDao.findByParticipantAndClientReference("BANKA", "BANKA-REF-001"))
+                .thenReturn(Optional.empty());
+        when(strategyFactory.getStrategy(MessageStandard.MT)).thenReturn(mtStrategy);
+        when(mtStrategy.buildSettlementInstruction(any())).thenReturn("{MT541 content}");
+        when(mtStrategy.getOutboundMessageType(any())).thenReturn("MT541");
+        when(instructionDao.save(any())).thenAnswer(inv -> {
+            SettlementInstruction si = inv.getArgument(0);
+            si.setId(1L);
+            existing.setOpenApiRequestHash(si.getOpenApiRequestHash());
+            return si;
+        });
+        when(swiftMessageDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        settlementService.submitOpenApiInstruction("BANKA", "BANKA-REF-001", validRequest);
+
+        when(instructionDao.findByParticipantAndClientReference("BANKA", "BANKA-REF-001"))
+                .thenReturn(Optional.of(existing));
+
+        SettlementInstruction replay = settlementService.submitOpenApiInstruction(
+                "BANKA", "BANKA-REF-001", validRequest);
+
+        assertThat(replay).isSameAs(existing);
+        verify(instructionDao, times(1)).save(any(SettlementInstruction.class));
+    }
+
+    @Test
+    void submitOpenApiInstruction_shouldRejectSameReferenceWithDifferentPayload() {
+        SettlementInstruction existing = new SettlementInstruction();
+        existing.setTradeRef("TR-EXISTING");
+        existing.setParticipantId("BANKA");
+        existing.setClientReference("BANKA-REF-001");
+        existing.setOpenApiRequestHash("different");
+        when(instructionDao.findByParticipantAndClientReference("BANKA", "BANKA-REF-001"))
+                .thenReturn(Optional.of(existing));
+
+        assertThatThrownBy(() -> settlementService.submitOpenApiInstruction(
+                "BANKA", "BANKA-REF-001", validRequest))
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("Duplicate clientReference");
+    }
 }

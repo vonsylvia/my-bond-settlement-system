@@ -35,6 +35,19 @@ public class SettlementInstructionDao {
         return results.isEmpty() ? Optional.empty() : Optional.of(results.getFirst());
     }
 
+    public Optional<SettlementInstruction> findByParticipantAndClientReference(
+            String participantId, String clientReference) {
+        TypedQuery<SettlementInstruction> query = entityManager.createQuery(
+            "SELECT s FROM SettlementInstruction s " +
+            "WHERE s.participantId = :participantId AND s.clientReference = :clientReference",
+            SettlementInstruction.class
+        );
+        query.setParameter("participantId", participantId);
+        query.setParameter("clientReference", clientReference);
+        List<SettlementInstruction> results = query.getResultList();
+        return results.isEmpty() ? Optional.empty() : Optional.of(results.getFirst());
+    }
+
     public List<SettlementInstruction> findByStatus(InstructionStatus status) {
         TypedQuery<SettlementInstruction> query = entityManager.createQuery(
             "SELECT s FROM SettlementInstruction s WHERE s.status = :status ORDER BY s.createdAt DESC",
