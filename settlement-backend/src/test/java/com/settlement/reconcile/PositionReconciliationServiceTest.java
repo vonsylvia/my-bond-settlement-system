@@ -184,10 +184,19 @@ class PositionReconciliationServiceTest {
         verify(eodSnapshotDao).saveAll(snapshotCaptor.capture());
         List<EodPositionSnapshot> snapshots = snapshotCaptor.getValue();
         assertThat(snapshots).hasSize(1);
+        assertThat(snapshots.getFirst().getBusinessDate()).isEqualTo(LocalDate.now());
         assertThat(snapshots.getFirst().getAccountId()).isEqualTo("ACC-001");
+        assertThat(snapshots.getFirst().getIsin()).isEqualTo("US0378331005");
         assertThat(snapshots.getFirst().getBalance()).isEqualByComparingTo("1000000.00");
 
-        verify(reconciliationSnapshotDao).save(any(ReconciliationSnapshot.class));
+        ArgumentCaptor<ReconciliationSnapshot> reconciliationCaptor =
+                ArgumentCaptor.forClass(ReconciliationSnapshot.class);
+        verify(reconciliationSnapshotDao).save(reconciliationCaptor.capture());
+        ReconciliationSnapshot savedReconciliation = reconciliationCaptor.getValue();
+        assertThat(savedReconciliation.getSnapshotType()).isEqualTo(SnapshotType.DAILY_CLOSE);
+        assertThat(savedReconciliation.getPositionsChecked()).isEqualTo(1);
+        assertThat(savedReconciliation.getDiscrepancyCount()).isZero();
+        assertThat(savedReconciliation.isConsistent()).isTrue();
     }
 
     @Test
@@ -216,9 +225,24 @@ class PositionReconciliationServiceTest {
         assertThat(result.isConsistent()).isFalse();
         assertThat(result.getDiscrepancyCount()).isEqualTo(1);
 
-        // Snapshots should still be saved (from current position, not ledger)
-        verify(eodSnapshotDao).saveAll(any());
-        verify(reconciliationSnapshotDao).save(any());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<EodPositionSnapshot>> snapshotCaptor =
+                ArgumentCaptor.forClass(List.class);
+        verify(eodSnapshotDao).saveAll(snapshotCaptor.capture());
+        List<EodPositionSnapshot> snapshots = snapshotCaptor.getValue();
+        assertThat(snapshots).hasSize(1);
+        assertThat(snapshots.getFirst().getAccountId()).isEqualTo("ACC-001");
+        assertThat(snapshots.getFirst().getIsin()).isEqualTo("US0378331005");
+        assertThat(snapshots.getFirst().getBalance()).isEqualByComparingTo("1000000.00");
+
+        ArgumentCaptor<ReconciliationSnapshot> reconciliationCaptor =
+                ArgumentCaptor.forClass(ReconciliationSnapshot.class);
+        verify(reconciliationSnapshotDao).save(reconciliationCaptor.capture());
+        ReconciliationSnapshot savedReconciliation = reconciliationCaptor.getValue();
+        assertThat(savedReconciliation.getSnapshotType()).isEqualTo(SnapshotType.DAILY_CLOSE);
+        assertThat(savedReconciliation.getPositionsChecked()).isEqualTo(1);
+        assertThat(savedReconciliation.getDiscrepancyCount()).isEqualTo(1);
+        assertThat(savedReconciliation.isConsistent()).isFalse();
     }
 
     @Test
@@ -241,7 +265,15 @@ class PositionReconciliationServiceTest {
 
         assertThat(result.isConsistent()).isTrue();
         verify(movementDao, never()).computeAllBalances();
-        verify(eodSnapshotDao).saveAll(any());
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<List<EodPositionSnapshot>> snapshotCaptor =
+                ArgumentCaptor.forClass(List.class);
+        verify(eodSnapshotDao).saveAll(snapshotCaptor.capture());
+        List<EodPositionSnapshot> snapshots = snapshotCaptor.getValue();
+        assertThat(snapshots).hasSize(1);
+        assertThat(snapshots.getFirst().getAccountId()).isEqualTo("ACC-001");
+        assertThat(snapshots.getFirst().getIsin()).isEqualTo("US0378331005");
+        assertThat(snapshots.getFirst().getBalance()).isEqualByComparingTo("1000000.00");
     }
 
     // --- Helpers ---

@@ -126,10 +126,14 @@ class ReconciliationServiceTest {
         ArgumentCaptor<SwiftMessage> msgCaptor = ArgumentCaptor.forClass(SwiftMessage.class);
         verify(swiftMessageDao).save(msgCaptor.capture());
         SwiftMessage saved = msgCaptor.getValue();
+        assertThat(saved.getInstructionId()).isEqualTo(1L);
+        assertThat(saved.getTradeRef()).isEqualTo("TR-TEST123456");
         assertThat(saved.getMessageType()).isEqualTo("MT548");
         assertThat(saved.getDirection()).isEqualTo(MessageDirection.INBOUND);
         assertThat(saved.getMessageStandard()).isEqualTo(MessageStandard.MT);
         assertThat(saved.getRawPayload()).isEqualTo(MT548_MATCHED);
+        assertThat(saved.getSequenceNo()).isEqualTo(1);
+        assertThat(saved.getParsedStatus()).isEqualTo("MATC");
     }
 
     @Test
@@ -161,8 +165,14 @@ class ReconciliationServiceTest {
 
         reconciliationService.processSwiftReply("TR-UNKNOWN", mt548WithUnknownRef);
 
-        verify(auditLogDao).save(any(AuditLog.class));
+        ArgumentCaptor<AuditLog> auditCaptor = ArgumentCaptor.forClass(AuditLog.class);
+        verify(auditLogDao).save(auditCaptor.capture());
+        AuditLog auditLog = auditCaptor.getValue();
+        assertThat(auditLog.getTradeRef()).isEqualTo("TR-UNKNOWN");
+        assertThat(auditLog.getEventType()).isEqualTo(AuditEventType.RECONCILE_UNMATCHED);
+        assertThat(auditLog.getDetail()).contains("No instruction found");
         verify(instructionDao, never()).save(any());
+        assertThat(metrics.getUnmatchedCount()).isEqualTo(1);
     }
 
     @Test
@@ -175,7 +185,14 @@ class ReconciliationServiceTest {
         verify(instructionDao, never()).save(any());
         verify(holdingDao, never()).save(any());
 
-        verify(auditLogDao).save(any(AuditLog.class));
+        ArgumentCaptor<AuditLog> auditCaptor = ArgumentCaptor.forClass(AuditLog.class);
+        verify(auditLogDao).save(auditCaptor.capture());
+        AuditLog auditLog = auditCaptor.getValue();
+        assertThat(auditLog.getTradeRef()).isEqualTo("CORR-ID-123");
+        assertThat(auditLog.getEventType()).isEqualTo(AuditEventType.RECONCILE_UNMATCHED);
+        assertThat(auditLog.getDetail())
+                .contains("Failed to extract tradeRef")
+                .contains("requires manual review");
         assertThat(metrics.getUnmatchedCount()).isEqualTo(1);
         verify(alertService).sendUnknownStatusAlert("CORR-ID-123", null);
     }
@@ -203,7 +220,10 @@ class ReconciliationServiceTest {
         ArgumentCaptor<AuditLog> auditCaptor = ArgumentCaptor.forClass(AuditLog.class);
         verify(auditLogDao, atLeastOnce()).save(auditCaptor.capture());
         boolean hasUnknownEvent = auditCaptor.getAllValues().stream()
-                .anyMatch(a -> a.getEventType() == AuditEventType.SETTLEMENT_STATUS_UNKNOWN);
+                .anyMatch(a -> a.getTradeRef().equals("TR-TEST123456")
+                        && a.getEventType() == AuditEventType.SETTLEMENT_STATUS_UNKNOWN
+                        && a.getDetail().contains("Unable to parse settlement status")
+                        && a.getDetail().contains("US0378331005"));
         assertThat(hasUnknownEvent).isTrue();
 
         assertThat(metrics.getUnknownCount()).isEqualTo(1);
