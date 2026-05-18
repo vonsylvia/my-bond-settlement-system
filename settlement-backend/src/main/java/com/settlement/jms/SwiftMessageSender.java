@@ -2,8 +2,10 @@ package com.settlement.jms;
 
 import com.settlement.entity.MessageStandard;
 import com.settlement.exception.BusinessException;
+import jakarta.jms.Queue;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jms.core.JmsTemplate;
 import org.springframework.stereotype.Component;
 
@@ -17,15 +19,18 @@ public class SwiftMessageSender {
     private static final Logger log = LoggerFactory.getLogger(SwiftMessageSender.class);
 
     private final JmsTemplate jmsTemplate;
+    private final Queue swiftSendQueue;
 
-    public SwiftMessageSender(JmsTemplate jmsTemplate) {
+    public SwiftMessageSender(JmsTemplate jmsTemplate,
+                              @Qualifier("swiftSendQueue") Queue swiftSendQueue) {
         this.jmsTemplate = jmsTemplate;
+        this.swiftSendQueue = swiftSendQueue;
     }
 
     public void sendSwiftMessage(String tradeRef, String rawPayload,
                                  String messageType, MessageStandard standard) {
         try {
-            jmsTemplate.send(session -> {
+            jmsTemplate.send(swiftSendQueue, session -> {
                 var textMessage = session.createTextMessage(rawPayload);
                 textMessage.setJMSCorrelationID(tradeRef);
                 textMessage.setStringProperty("MessageType", messageType);
