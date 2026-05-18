@@ -628,7 +628,7 @@ SettlementXaExecutor.executeSettlement():
         MT_ONLY → send MT version
         MX_ONLY → send MX version
         DUAL    → send counterparty's preferredStandard
-        Unknown → fallback to instruction's preferredStandard
+        Unknown → fallback to conservative MT default
     → SwiftMessageDao.findLatestOutboundByStandard(resolved)
     → JmsTemplate.send(SWIFT.SEND.QUEUE) → SWIFT Gateway
 ```
@@ -670,7 +670,7 @@ During the SWIFT MT→MX migration coexistence period (2025-2027), the system ma
 | `MT_ONLY` | Always send MT format regardless of instruction preference |
 | `MX_ONLY` | Always send MX format regardless of instruction preference |
 | `DUAL` | Send counterparty's preferred format (MT or MX) |
-| Unknown | Fallback to instruction's own `preferredStandard` (backward compatible) |
+| Unknown | Fallback to conservative `MT` default |
 
 ### Cross-Module Bridge
 

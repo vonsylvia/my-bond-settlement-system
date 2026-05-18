@@ -150,7 +150,7 @@ public class SettlementXaExecutor {
 
     /**
      * Determines the outbound standard based on counterparty capability registry.
-     * Falls back to the instruction's preferred standard if no registration exists.
+     * Falls back to MT if no registration exists.
      */
     private MessageStandard resolveOutboundStandard(SettlementInstruction instruction) {
         Optional<CounterpartyCapability> capability =
@@ -163,9 +163,9 @@ public class SettlementXaExecutor {
             return resolved;
         }
 
-        log.debug("No counterparty capability found for bic={}, falling back to preferredStandard={}",
-                instruction.getBicCode(), instruction.getPreferredStandard());
-        return instruction.getPreferredStandard();
+        log.debug("No counterparty capability found for bic={}, falling back to conservative default MT",
+                instruction.getBicCode());
+        return MessageStandard.MT;
     }
 
     private static final long ORPHAN_THRESHOLD_MINUTES = 5;

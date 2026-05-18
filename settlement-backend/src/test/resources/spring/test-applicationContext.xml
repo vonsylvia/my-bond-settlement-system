@@ -61,12 +61,24 @@
 
     <tx:annotation-driven transaction-manager="transactionManager"/>
 
+    <bean id="settlementExecutor"
+          class="org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor">
+        <property name="corePoolSize" value="1"/>
+        <property name="maxPoolSize" value="1"/>
+        <property name="queueCapacity" value="10"/>
+        <property name="threadNamePrefix" value="test-settlement-"/>
+    </bean>
+
+    <bean id="alertExecutor"
+          class="org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor">
+        <property name="corePoolSize" value="1"/>
+        <property name="maxPoolSize" value="1"/>
+        <property name="queueCapacity" value="10"/>
+        <property name="threadNamePrefix" value="test-alert-"/>
+    </bean>
+
     <!-- Mock JMS beans for integration tests (no real MQ in test) -->
-    <bean id="jmsTemplate" class="org.mockito.Mockito" factory-method="mock">
-        <constructor-arg value="org.springframework.jms.core.JmsTemplate"/>
-    </bean>
-    <bean id="swiftMessageSender" class="org.mockito.Mockito" factory-method="mock">
-        <constructor-arg value="com.settlement.jms.SwiftMessageSender"/>
-    </bean>
+    <bean id="jmsTemplate" class="com.settlement.test.MockBeanFactory" factory-method="jmsTemplate"/>
+    <bean id="swiftMessageSender" class="com.settlement.test.MockBeanFactory" factory-method="swiftMessageSender"/>
 
 </beans>
