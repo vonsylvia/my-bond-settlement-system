@@ -26,19 +26,4 @@ public record CanonicalSettlement(
         String placeOfTrade,
         String placeOfClearing
 ) {
-    /**
-     * Minimal builder for MT-style settlements (BIC + core fields only).
-     */
-    public static CanonicalSettlement forMt(
-            String transactionId, String isin, LocalDate settlementDate,
-            BigDecimal quantity, SettlementDirection direction,
-            String counterpartyBic, String safekeepingAccount) {
-        return new CanonicalSettlement(
-                transactionId, isin, settlementDate, quantity, direction,
-                PaymentType.AGAINST_PAYMENT,
-                PartyInfo.ofBic("OWNRBICXXX"),
-                PartyInfo.ofBic(counterpartyBic),
-                safekeepingAccount,
-                null, null, null);
-    }
 }

@@ -5,6 +5,7 @@ import com.settlement.entity.SettlementInstruction;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -14,6 +15,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -84,7 +86,13 @@ class AlertWebhookServiceTest {
 
         service.sendExhaustedAlert(instruction);
 
-        verify(mockHttpClient).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+        ArgumentCaptor<HttpRequest> requestCaptor = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(mockHttpClient).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        HttpRequest request = requestCaptor.getValue();
+        assertThat(request.method()).isEqualTo("POST");
+        assertThat(request.uri().toString()).isEqualTo("http://example.com/webhook");
+        assertThat(request.headers().firstValue("Content-Type")).contains("application/json");
+        assertThat(request.timeout()).contains(java.time.Duration.ofSeconds(10));
     }
 
     @Test
@@ -99,7 +107,10 @@ class AlertWebhookServiceTest {
 
         service.sendExhaustedAlert(instruction);
 
-        verify(mockHttpClient).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+        ArgumentCaptor<HttpRequest> requestCaptor = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(mockHttpClient).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        assertThat(requestCaptor.getValue().method()).isEqualTo("POST");
+        assertThat(requestCaptor.getValue().uri().toString()).isEqualTo("http://example.com/webhook");
     }
 
     @Test
@@ -112,6 +123,9 @@ class AlertWebhookServiceTest {
 
         service.sendExhaustedAlert(instruction);
 
-        verify(mockHttpClient).send(any(HttpRequest.class), any(HttpResponse.BodyHandler.class));
+        ArgumentCaptor<HttpRequest> requestCaptor = ArgumentCaptor.forClass(HttpRequest.class);
+        verify(mockHttpClient).send(requestCaptor.capture(), any(HttpResponse.BodyHandler.class));
+        assertThat(requestCaptor.getValue().method()).isEqualTo("POST");
+        assertThat(requestCaptor.getValue().uri().toString()).isEqualTo("http://example.com/webhook");
     }
 }

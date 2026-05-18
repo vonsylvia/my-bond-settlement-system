@@ -49,7 +49,12 @@ class MatchingEngineServiceTest {
         MatchingInstruction result = matchingEngine.submitForMatching(buy);
 
         assertThat(result.getMatchingStatus()).isEqualTo(MatchingStatus.ALLEGED);
-        verify(auditLogDao).save(any(AuditLog.class));
+        ArgumentCaptor<AuditLog> auditCaptor = ArgumentCaptor.forClass(AuditLog.class);
+        verify(auditLogDao).save(auditCaptor.capture());
+        AuditLog auditLog = auditCaptor.getValue();
+        assertThat(auditLog.getTradeRef()).isEqualTo("TR-BUY001");
+        assertThat(auditLog.getEventType()).isEqualTo(AuditEventType.MATCHING_ALLEGED);
+        assertThat(auditLog.getDetail()).contains("No counterparty instruction found");
     }
 
     @Test
@@ -75,7 +80,16 @@ class MatchingEngineServiceTest {
         assertThat(sell.getMatchingStatus()).isEqualTo(MatchingStatus.MATCHED);
         assertThat(sell.getMatchedWithId()).isEqualTo(1L);
 
-        verify(auditLogDao, times(2)).save(any(AuditLog.class));
+        ArgumentCaptor<AuditLog> auditCaptor = ArgumentCaptor.forClass(AuditLog.class);
+        verify(auditLogDao, times(2)).save(auditCaptor.capture());
+        assertThat(auditCaptor.getAllValues())
+                .extracting(AuditLog::getTradeRef)
+                .containsExactly("TR-BUY001", "TR-SELL001");
+        assertThat(auditCaptor.getAllValues())
+                .allSatisfy(audit -> {
+                    assertThat(audit.getEventType()).isEqualTo(AuditEventType.MATCHING_MATCHED);
+                    assertThat(audit.getDetail()).contains("Matched with counterparty instruction");
+                });
     }
 
     @Test

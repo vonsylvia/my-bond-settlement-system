@@ -12,6 +12,7 @@ import com.settlement.exception.ResourceNotFoundException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -23,6 +24,7 @@ import org.springframework.validation.beanvalidation.LocalValidatorFactoryBean;
 import java.util.List;
 import java.util.Optional;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -130,6 +132,16 @@ class CounterpartyControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.bicCode").value("DEUTDEFF"))
                 .andExpect(jsonPath("$.participantName").value("Deutsche Bank"));
+
+        ArgumentCaptor<CounterpartyCapability> capabilityCaptor =
+                ArgumentCaptor.forClass(CounterpartyCapability.class);
+        verify(capabilityDao).save(capabilityCaptor.capture());
+        CounterpartyCapability saved = capabilityCaptor.getValue();
+        assertThat(saved.getBicCode()).isEqualTo("DEUTDEFF");
+        assertThat(saved.getParticipantName()).isEqualTo("Deutsche Bank");
+        assertThat(saved.getSupportedStandard()).isEqualTo(SupportedStandard.DUAL);
+        assertThat(saved.getPreferredStandard()).isEqualTo(MessageStandard.MX);
+        assertThat(saved.isActive()).isTrue();
     }
 
     @Test
@@ -152,6 +164,16 @@ class CounterpartyControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.participantName").value("Goldman Sachs International"))
                 .andExpect(jsonPath("$.supportedStandard").value("DUAL"));
+
+        ArgumentCaptor<CounterpartyCapability> capabilityCaptor =
+                ArgumentCaptor.forClass(CounterpartyCapability.class);
+        verify(capabilityDao).save(capabilityCaptor.capture());
+        CounterpartyCapability saved = capabilityCaptor.getValue();
+        assertThat(saved.getBicCode()).isEqualTo("GOLDUS33XXX");
+        assertThat(saved.getParticipantName()).isEqualTo("Goldman Sachs International");
+        assertThat(saved.getSupportedStandard()).isEqualTo(SupportedStandard.DUAL);
+        assertThat(saved.getPreferredStandard()).isEqualTo(MessageStandard.MX);
+        assertThat(saved.isActive()).isTrue();
     }
 
     @Test
