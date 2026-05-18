@@ -52,31 +52,41 @@ public class MtStrategy implements SwiftMessageStrategy {
     public String buildSettlementInstruction(CanonicalSettlement settlement) {
         AbstractMT mt = createSettlementMessage(settlement);
 
+        // Basic header sender BIC: instructing party / account owner.
         mt.setSender(padBic(settlement.instructingParty().bic()));
+        // Basic/application header receiver BIC: settlement counterparty.
         mt.setReceiver(padBic(settlement.counterparty().bic()));
 
+        // :20C::SEME// - sender's settlement message reference / transaction id.
         mt.addField(new Field20C()
                 .setQualifier(SwiftConst.SEME)
                 .setReference(settlement.transactionId()));
+        // :23G:NEWM - message function, a new settlement instruction.
         mt.addField(new Field23G(SwiftConst.NEWM));
 
         String settlementDateStr = settlement.settlementDate().format(SWIFT_DATE_FORMAT);
+        // :98A::SETT// - requested settlement date in SWIFT yyyyMMdd format.
         mt.addField(new Field98A()
                 .setQualifier(SwiftConst.SETT)
                 .setDate(settlementDateStr));
+        // :35B:ISIN - financial instrument identification.
         mt.addField(new Field35B("ISIN " + settlement.isin()));
+        // :36B::SETT//FAMT/ - settlement quantity, expressed as face amount.
         mt.addField(new Field36B()
                 .setQualifier(SwiftConst.SETT)
                 .setQuantityTypeCode(SwiftConst.FAMT)
                 .setQuantity(settlement.quantity().toPlainString()));
 
+        // :95P::PSET// - place of settlement.
         mt.addField(new Field95P()
                 .setQualifier(SwiftConst.PSET)
                 .setIdentifierCode("HKMAHKHCXXX"));
+        // :95P::DEAG/REAG// - counterparty settlement agent by direction.
         mt.addField(new Field95P()
                 .setQualifier(settlement.direction() == SettlementDirection.RECEIVE
                         ? SwiftConst.DEAG : SwiftConst.REAG)
                 .setIdentifierCode(padBic(settlement.counterparty().bic())));
+        // :97A::SAFE// - safekeeping securities account.
         mt.addField(new Field97A()
                 .setQualifier(SwiftConst.SAFE)
                 .setAccountNumber(settlement.safekeepingAccount()));
@@ -187,8 +197,8 @@ public class MtStrategy implements SwiftMessageStrategy {
                 switch (msgType) {
                     case "540" -> { direction = SettlementDirection.RECEIVE; paymentType = PaymentType.FREE_OF_PAYMENT; }
                     case "541" -> { direction = SettlementDirection.RECEIVE; paymentType = PaymentType.AGAINST_PAYMENT; }
-                    case "542" -> { direction = SettlementDirection.DELIVER; paymentType = PaymentType.AGAINST_PAYMENT; }
-                    case "543" -> { direction = SettlementDirection.DELIVER; paymentType = PaymentType.FREE_OF_PAYMENT; }
+                    case "542" -> { direction = SettlementDirection.DELIVER; paymentType = PaymentType.FREE_OF_PAYMENT; }
+                    case "543" -> { direction = SettlementDirection.DELIVER; paymentType = PaymentType.AGAINST_PAYMENT; }
                     default -> {} // keep defaults
                 }
             }
