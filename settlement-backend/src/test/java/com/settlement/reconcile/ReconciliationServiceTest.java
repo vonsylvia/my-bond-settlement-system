@@ -95,7 +95,7 @@ class ReconciliationServiceTest {
         sampleInstruction.setDirection(Direction.BUY);
         sampleInstruction.setAccountId("ACC-001");
         sampleInstruction.setStatus(InstructionStatus.SENT);
-        sampleInstruction.setPreferredStandard(MessageStandard.MT);
+        sampleInstruction.setRequestedStandard(MessageStandard.MT);
     }
 
     @Test

@@ -93,9 +93,9 @@ public class SettlementService {
                                                     String clientReference, String requestHash) {
         String tradeRef = generateTradeRef();
 
-        MessageStandard standard = (request.getPreferredStandard() != null
-                && !request.getPreferredStandard().isBlank())
-                ? MessageStandard.valueOf(request.getPreferredStandard())
+        MessageStandard requestedStandard = (request.getRequestedStandard() != null
+                && !request.getRequestedStandard().isBlank())
+                ? MessageStandard.valueOf(request.getRequestedStandard())
                 : MessageStandard.MT;
 
         String currency = (request.getCurrency() != null && !request.getCurrency().isBlank())
@@ -117,20 +117,20 @@ public class SettlementService {
         instruction.setDirection(Direction.valueOf(request.getDirection()));
         instruction.setAccountId(request.getAccountId());
         instruction.setStatus(InstructionStatus.PENDING);
-        instruction.setPreferredStandard(standard);
+        instruction.setRequestedStandard(requestedStandard);
         instruction.setCurrency(currency);
         instruction.setPaymentType(paymentType);
         instruction.setSettlementAmount(request.getSettlementAmount());
 
         instructionDao.save(instruction);
 
-        SwiftMessageStrategy strategy = strategyFactory.getStrategy(standard);
+        SwiftMessageStrategy strategy = strategyFactory.getStrategy(requestedStandard);
         CanonicalSettlement canonical = canonicalMapper.toCanonical(instruction);
         String rawMessage = strategy.buildSettlementInstruction(canonical);
         String messageType = strategy.getOutboundMessageType(canonical);
 
         SwiftMessage primaryMsg = new SwiftMessage(
-                instruction.getId(), tradeRef, standard, messageType,
+                instruction.getId(), tradeRef, requestedStandard, messageType,
                 MessageDirection.OUTBOUND, rawMessage);
         swiftMessageDao.save(primaryMsg);
 
@@ -140,7 +140,7 @@ public class SettlementService {
                         + request.getIsin() + " QTY=" + request.getQuantity()));
 
         log.info("Settlement instruction created: tradeRef={}, participantId={}, clientReference={}, ISIN={}, direction={}, standard={} — async send queued",
-                tradeRef, participantId, clientReference, request.getIsin(), request.getDirection(), standard);
+                tradeRef, participantId, clientReference, request.getIsin(), request.getDirection(), requestedStandard);
 
         scheduleAfterCommit(tradeRef);
 
@@ -260,7 +260,7 @@ public class SettlementService {
                 nullToEmpty(request.getBicCode()),
                 nullToEmpty(request.getDirection()),
                 nullToEmpty(request.getAccountId()),
-                nullToEmpty(request.getPreferredStandard()),
+                nullToEmpty(request.getRequestedStandard()),
                 nullToEmpty(request.getCurrency()),
                 Objects.toString(request.getSettlementAmount(), ""),
                 nullToEmpty(request.getPaymentType()));

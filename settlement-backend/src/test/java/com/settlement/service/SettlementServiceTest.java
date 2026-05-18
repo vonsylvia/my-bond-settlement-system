@@ -104,7 +104,7 @@ class SettlementServiceTest {
         assertThat(result.getAccountId()).isEqualTo("ACC-001");
         assertThat(result.getStatus()).isEqualTo(InstructionStatus.PENDING);
         assertThat(result.getTradeRef()).startsWith("TR-");
-        assertThat(result.getPreferredStandard()).isEqualTo(MessageStandard.MT);
+        assertThat(result.getRequestedStandard()).isEqualTo(MessageStandard.MT);
         assertThat(result.getCurrency()).isEqualTo("HKD");
         assertThat(result.getPaymentType()).isEqualTo(PaymentType.AGAINST_PAYMENT.name());
 
@@ -132,7 +132,7 @@ class SettlementServiceTest {
         assertThat(mappedInstruction.getTradeRef()).startsWith("TR-");
         assertThat(mappedInstruction.getIsin()).isEqualTo("US0378331005");
         assertThat(mappedInstruction.getDirection()).isEqualTo(Direction.BUY);
-        assertThat(mappedInstruction.getPreferredStandard()).isEqualTo(MessageStandard.MT);
+        assertThat(mappedInstruction.getRequestedStandard()).isEqualTo(MessageStandard.MT);
 
         verify(mtStrategy).buildSettlementInstruction(canonical);
         verify(mtStrategy).getOutboundMessageType(canonical);

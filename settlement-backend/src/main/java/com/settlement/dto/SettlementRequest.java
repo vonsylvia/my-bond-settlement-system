@@ -34,8 +34,8 @@ public class SettlementRequest {
     @Size(max = 50, message = "Account ID must not exceed 50 characters")
     private String accountId;
 
-    @Pattern(regexp = "^(MT|MX)$", message = "Preferred standard must be MT or MX")
-    private String preferredStandard;
+    @Pattern(regexp = "^(MT|MX)$", message = "Requested standard must be MT or MX")
+    private String requestedStandard;
 
     @Pattern(regexp = "^(HKD|USD|EUR|CNY)?$", message = "Currency must be HKD, USD, EUR, or CNY")
     private String currency;
@@ -102,12 +102,12 @@ public class SettlementRequest {
         this.accountId = accountId;
     }
 
-    public String getPreferredStandard() {
-        return preferredStandard;
+    public String getRequestedStandard() {
+        return requestedStandard;
     }
 
-    public void setPreferredStandard(String preferredStandard) {
-        this.preferredStandard = preferredStandard;
+    public void setRequestedStandard(String requestedStandard) {
+        this.requestedStandard = requestedStandard;
     }
 
     public String getCurrency() {

@@ -141,7 +141,7 @@ class OpenApiSettlementControllerTest {
         request.setCurrency("HKD");
         request.setSettlementAmount(new BigDecimal("998750.25"));
         request.setPaymentType("AGAINST_PAYMENT");
-        request.setPreferredStandard("MT");
+        request.setRequestedStandard("MT");
         return request;
     }
 
@@ -161,7 +161,7 @@ class OpenApiSettlementControllerTest {
         instruction.setCurrency("HKD");
         instruction.setSettlementAmount(new BigDecimal("998750.25"));
         instruction.setPaymentType("AGAINST_PAYMENT");
-        instruction.setPreferredStandard(MessageStandard.MT);
+        instruction.setRequestedStandard(MessageStandard.MT);
         return instruction;
     }
 }

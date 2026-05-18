@@ -69,6 +69,7 @@ class SettlementXaExecutorIT {
         Optional<SettlementInstruction> updated = instructionDao.findByTradeRef("TR-XA-IT-001");
         assertThat(updated).isPresent();
         assertThat(updated.get().getStatus()).isEqualTo(InstructionStatus.SENT);
+        assertThat(updated.get().getResolvedStandard()).isEqualTo(MessageStandard.MT);
     }
 
     @Test
@@ -112,7 +113,7 @@ class SettlementXaExecutorIT {
     @Test
     void executeSettlement_shouldFallbackToMtForUnknownCounterparty() {
         SettlementInstruction instruction = createAndSave("TR-XA-IT-005");
-        instruction.setPreferredStandard(MessageStandard.MX);
+        instruction.setRequestedStandard(MessageStandard.MX);
         instructionDao.save(instruction);
         createOutboundMessage(instruction);
         doNothing().when(messageSender).sendSwiftMessage(anyString(), anyString(), anyString(), any());
@@ -121,6 +122,10 @@ class SettlementXaExecutorIT {
 
         verify(messageSender).sendSwiftMessage(
                 eq("TR-XA-IT-005"), anyString(), eq("MT541"), eq(MessageStandard.MT));
+        assertThat(instructionDao.findByTradeRef("TR-XA-IT-005"))
+                .get()
+                .extracting(SettlementInstruction::getResolvedStandard)
+                .isEqualTo(MessageStandard.MT);
     }
 
     private SettlementInstruction createAndSave(String tradeRef) {
@@ -134,7 +139,7 @@ class SettlementXaExecutorIT {
         instruction.setDirection(Direction.BUY);
         instruction.setAccountId("ACC-IT");
         instruction.setStatus(InstructionStatus.PENDING);
-        instruction.setPreferredStandard(MessageStandard.MT);
+        instruction.setRequestedStandard(MessageStandard.MT);
         return instructionDao.save(instruction);
     }
 

@@ -117,6 +117,7 @@ public class SettlementXaExecutor {
                 outbound.getMessageType(), outbound.getMessageStandard());
 
         instruction.setStatus(InstructionStatus.SENT);
+        instruction.setResolvedStandard(outbound.getMessageStandard());
         instruction.setFailureReason(null);
         instruction.setRetryCount(0);
         instructionDao.save(instruction);

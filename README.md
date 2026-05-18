@@ -342,7 +342,8 @@ echo "test message body" | /opt/mqm/samp/bin/amqsput SWIFT.REPLY.QUEUE SETTLEMEN
 docker exec -it settlement-oracle sqlplus settlement/settlement123@//localhost:1521/XEPDB1
 
 # Useful queries
-SELECT TRADE_REF, STATUS, PREFERRED_STANDARD, ISIN FROM SETTLEMENT_INSTRUCTION ORDER BY CREATED_AT DESC;
+SELECT TRADE_REF, STATUS, REQUESTED_STANDARD, RESOLVED_STANDARD, ISIN
+FROM SETTLEMENT_INSTRUCTION ORDER BY CREATED_AT DESC;
 SELECT * FROM BOND_HOLDING;
 SELECT TRADE_REF, EVENT_TYPE, DETAIL FROM AUDIT_LOG ORDER BY CREATED_AT DESC;
 
@@ -823,7 +824,7 @@ curl -X POST http://localhost:9080/settlement/api/open/settlement-instructions \
     "bicCode": "GOLDUS33XXX",
     "accountId": "ACC-001",
     "settlementDate": "2026-05-18",
-    "preferredStandard": "MT",
+    "requestedStandard": "MT",
     "currency": "HKD",
     "settlementAmount": 998750.25,
     "paymentType": "AGAINST_PAYMENT"
@@ -876,7 +877,7 @@ curl -X POST http://localhost:9080/settlement/api/open/settlement-instructions \
   "bicCode": "DEUTDEFFXXX",
   "accountId": "ACC-001",
   "settlementDate": "2026-06-01",
-  "preferredStandard": "MX",
+  "requestedStandard": "MX",
   "currency": "HKD",
   "settlementAmount": 980000.00,
   "paymentType": "AGAINST_PAYMENT"
@@ -885,7 +886,7 @@ curl -X POST http://localhost:9080/settlement/api/open/settlement-instructions \
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `preferredStandard` | No | `"MT"` (default) or `"MX"` — determines SWIFT message format |
+| `requestedStandard` | No | `"MT"` (default) or `"MX"` — request hint used for the initially built message; final outbound format is stored as `resolvedStandard` after counterparty routing |
 | `currency` | No | `HKD` / `USD` / `EUR` / `CNY` — settlement currency |
 | `settlementAmount` | No | Cash amount for DVP instructions |
 | `paymentType` | No | `AGAINST_PAYMENT` (DVP) or `FREE_OF_PAYMENT` (FOP) |
@@ -903,6 +904,16 @@ ALTER TABLE SETTLEMENT_INSTRUCTION ADD (
 
 ALTER TABLE SETTLEMENT_INSTRUCTION
   ADD CONSTRAINT UK_OPEN_API_CLIENT_REF UNIQUE (PARTICIPANT_ID, CLIENT_REFERENCE);
+```
+
+Existing Oracle databases created before message routing audit fields should also migrate the
+instruction-level format hint to the newer names:
+
+```sql
+ALTER TABLE SETTLEMENT_INSTRUCTION RENAME COLUMN PREFERRED_STANDARD TO REQUESTED_STANDARD;
+ALTER TABLE SETTLEMENT_INSTRUCTION ADD RESOLVED_STANDARD VARCHAR2(5);
+ALTER TABLE SETTLEMENT_INSTRUCTION
+  ADD CONSTRAINT CK_RESOLVED_STD CHECK (RESOLVED_STANDARD IN ('MT', 'MX'));
 ```
 
 **MDB test** (`POST /api/mq/test-mdb`):
