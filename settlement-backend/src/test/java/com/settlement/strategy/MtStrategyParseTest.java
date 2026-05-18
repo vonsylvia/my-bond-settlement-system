@@ -41,6 +41,14 @@ class MtStrategyParseTest {
     }
 
     @Test
+    void parseSettlementInstruction_shouldRoundTripDirectionAndPaymentTypeForMt54xFamily() {
+        assertMt54xRoundTrip(SettlementDirection.RECEIVE, PaymentType.FREE_OF_PAYMENT);
+        assertMt54xRoundTrip(SettlementDirection.RECEIVE, PaymentType.AGAINST_PAYMENT);
+        assertMt54xRoundTrip(SettlementDirection.DELIVER, PaymentType.FREE_OF_PAYMENT);
+        assertMt54xRoundTrip(SettlementDirection.DELIVER, PaymentType.AGAINST_PAYMENT);
+    }
+
+    @Test
     void parseSettlementInstruction_shouldExtractTradeRef() {
         String mt541 = buildSampleMt541("TR-REF-XYZ");
         CanonicalSettlement parsed = strategy.parseSettlementInstruction(mt541);
@@ -76,5 +84,27 @@ class MtStrategyParseTest {
                 PartyInfo.ofBic("OWNRBICXXX"), PartyInfo.ofBic("GOLDUS33"),
                 "ACC-002", null, null, null);
         return strategy.buildSettlementInstruction(canonical);
+    }
+
+    private void assertMt54xRoundTrip(SettlementDirection direction, PaymentType paymentType) {
+        CanonicalSettlement original = new CanonicalSettlement(
+                "TR-" + direction + "-" + paymentType,
+                "US0378331005",
+                LocalDate.of(2026, 5, 15),
+                new BigDecimal("500000.00"),
+                direction,
+                paymentType,
+                PartyInfo.ofBic("OWNRBICXXX"),
+                PartyInfo.ofBic("GOLDUS33"),
+                "ACC-002",
+                null,
+                null,
+                null);
+
+        CanonicalSettlement parsed = strategy.parseSettlementInstruction(
+                strategy.buildSettlementInstruction(original));
+
+        assertThat(parsed.direction()).isEqualTo(direction);
+        assertThat(parsed.paymentType()).isEqualTo(paymentType);
     }
 }
