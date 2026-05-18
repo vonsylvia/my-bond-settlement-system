@@ -42,41 +42,54 @@ public class MxStrategy implements SwiftMessageStrategy {
     public String buildSettlementInstruction(CanonicalSettlement settlement) {
         MxSese02300109 mx = new MxSese02300109();
 
+        // Business application header: ISO 20022 sender/receiver envelope metadata.
         mx.setAppHdr(buildAppHeader(settlement));
 
+        // SctiesMvmntTp: securities movement direction, receive or deliver.
         ReceiveDelivery1Code movementType = (settlement.direction() == SettlementDirection.RECEIVE)
                 ? ReceiveDelivery1Code.RECE
                 : ReceiveDelivery1Code.DELI;
+        // Pmt: settlement payment condition, free of payment or against payment.
         DeliveryReceiptType2Code paymentType = (settlement.paymentType() == PaymentType.FREE_OF_PAYMENT)
                 ? DeliveryReceiptType2Code.FREE
                 : DeliveryReceiptType2Code.APMT;
 
         mx.setSctiesSttlmTxInstr(
                 new SecuritiesSettlementTransactionInstructionV09()
+                        // TxId: account owner's transaction id / trade reference.
                         .setTxId(settlement.transactionId())
+                        // SttlmTpAndAddtlParams: settlement movement and payment attributes.
                         .setSttlmTpAndAddtlParams(
                                 new SettlementTypeAndAdditionalParameters19()
+                                        // SctiesMvmntTp: RECE for receive, DELI for deliver.
                                         .setSctiesMvmntTp(movementType)
+                                        // Pmt: FREE for free of payment, APMT for against payment.
                                         .setPmt(paymentType)
                         )
+                        // TradDtls/SttlmDt/Dt: requested settlement date.
                         .setTradDtls(
                                 new SecuritiesTradeDetails97()
                                         .setSttlmDt(new SettlementDate17Choice()
                                                 .setDt(new DateAndDateTime2Choice()
                                                         .setDt(toXmlDate(settlement.settlementDate()))))
                         )
+                        // FinInstrmId/ISIN: financial instrument identification.
                         .setFinInstrmId(
                                 new SecurityIdentification19()
                                         .setISIN(settlement.isin())
                         )
+                        // QtyAndAcctDtls: settlement quantity and safekeeping account.
                         .setQtyAndAcctDtls(
                                 new QuantityAndAccount79()
+                                        // SttlmQty/Qty/Unit: settlement quantity in units/face amount.
                                         .setSttlmQty(new Quantity6Choice()
                                                 .setQty(new FinancialInstrumentQuantity1Choice()
                                                         .setUnit(settlement.quantity())))
+                                        // SfkpgAcct/Id: safekeeping securities account.
                                         .setSfkpgAcct(new SecuritiesAccount19()
                                                 .setId(settlement.safekeepingAccount()))
                         )
+                        // DlvrgSttlmPties/Pty1/AnyBIC: counterparty settlement party BIC.
                         .setDlvrgSttlmPties(
                                 new SettlementParties76()
                                         .setPty1(new PartyIdentificationAndAccount168()
