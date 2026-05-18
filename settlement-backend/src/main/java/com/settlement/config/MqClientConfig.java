@@ -1,6 +1,7 @@
 package com.settlement.config;
 
 import jakarta.jms.ConnectionFactory;
+import jakarta.jms.Queue;
 import javax.naming.InitialContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -30,10 +31,16 @@ public class MqClientConfig {
         return cf;
     }
 
+    @Bean(name = "swiftSendQueue")
+    public Queue swiftSendQueue() throws Exception {
+        Queue queue = InitialContext.doLookup("jms/SwiftSendQueue");
+        log.info("JNDI lookup successful: jms/SwiftSendQueue → {}", queue.getClass().getName());
+        return queue;
+    }
+
     @Bean(name = "jmsTemplate")
     public JmsTemplate jmsTemplate(ConnectionFactory jmsConnectionFactory) {
         JmsTemplate template = new JmsTemplate(jmsConnectionFactory);
-        template.setDefaultDestinationName("SWIFT.SEND.QUEUE");
         template.setDeliveryPersistent(true);
         template.setReceiveTimeout(5000);
         // sessionTransacted is intentionally NOT set (defaults to false).
