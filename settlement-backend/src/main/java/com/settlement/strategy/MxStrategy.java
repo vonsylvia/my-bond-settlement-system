@@ -54,54 +54,63 @@ public class MxStrategy implements SwiftMessageStrategy {
                 ? DeliveryReceiptType2Code.FREE
                 : DeliveryReceiptType2Code.APMT;
 
-        mx.setSctiesSttlmTxInstr(
-                new SecuritiesSettlementTransactionInstructionV09()
-                        // TxId: account owner's transaction id / trade reference.
-                        .setTxId(settlement.transactionId())
-                        // SttlmTpAndAddtlParams: settlement movement and payment attributes.
-                        .setSttlmTpAndAddtlParams(
-                                new SettlementTypeAndAdditionalParameters19()
-                                        // SctiesMvmntTp: RECE for receive, DELI for deliver.
-                                        .setSctiesMvmntTp(movementType)
-                                        // Pmt: FREE for free of payment, APMT for against payment.
-                                        .setPmt(paymentType)
-                        )
-                        // TradDtls/SttlmDt/Dt: requested settlement date.
-                        .setTradDtls(
-                                new SecuritiesTradeDetails97()
-                                        .setSttlmDt(new SettlementDate17Choice()
-                                                .setDt(new DateAndDateTime2Choice()
-                                                        .setDt(toXmlDate(settlement.settlementDate()))))
-                        )
-                        // FinInstrmId/ISIN: financial instrument identification.
-                        .setFinInstrmId(
-                                new SecurityIdentification19()
-                                        .setISIN(settlement.isin())
-                        )
-                        // QtyAndAcctDtls: settlement quantity and safekeeping account.
-                        .setQtyAndAcctDtls(
-                                new QuantityAndAccount79()
-                                        // SttlmQty/Qty/Unit: settlement quantity in units/face amount.
-                                        .setSttlmQty(new Quantity6Choice()
-                                                .setQty(new FinancialInstrumentQuantity1Choice()
-                                                        .setUnit(settlement.quantity())))
-                                        // SfkpgAcct/Id: safekeeping securities account.
-                                        .setSfkpgAcct(new SecuritiesAccount19()
-                                                .setId(settlement.safekeepingAccount()))
-                        )
-                        // DlvrgSttlmPties/Pty1/AnyBIC: counterparty settlement party BIC.
-                        .setDlvrgSttlmPties(
-                                new SettlementParties76()
-                                        .setPty1(new PartyIdentificationAndAccount168()
-                                                .setId(new PartyIdentification120Choice()
-                                                        .setAnyBIC(padBic(settlement.counterparty().bic()))))
-                        )
-        );
+        SecuritiesSettlementTransactionInstructionV09 instruction = new SecuritiesSettlementTransactionInstructionV09()
+                // TxId: account owner's transaction id / trade reference.
+                .setTxId(settlement.transactionId())
+                // SttlmTpAndAddtlParams: settlement movement and payment attributes.
+                .setSttlmTpAndAddtlParams(
+                        new SettlementTypeAndAdditionalParameters19()
+                                // SctiesMvmntTp: RECE for receive, DELI for deliver.
+                                .setSctiesMvmntTp(movementType)
+                                // Pmt: FREE for free of payment, APMT for against payment.
+                                .setPmt(paymentType)
+                )
+                // TradDtls/SttlmDt/Dt: requested settlement date.
+                .setTradDtls(
+                        new SecuritiesTradeDetails97()
+                                .setSttlmDt(new SettlementDate17Choice()
+                                        .setDt(new DateAndDateTime2Choice()
+                                                .setDt(toXmlDate(settlement.settlementDate()))))
+                )
+                // FinInstrmId/ISIN: financial instrument identification.
+                .setFinInstrmId(
+                        new SecurityIdentification19()
+                                .setISIN(settlement.isin())
+                )
+                // QtyAndAcctDtls: settlement quantity and safekeeping account.
+                .setQtyAndAcctDtls(
+                        new QuantityAndAccount79()
+                                // SttlmQty/Qty/Unit: settlement quantity in units/face amount.
+                                .setSttlmQty(new Quantity6Choice()
+                                        .setQty(new FinancialInstrumentQuantity1Choice()
+                                                .setUnit(settlement.quantity())))
+                                // SfkpgAcct/Id: safekeeping securities account.
+                                .setSfkpgAcct(new SecuritiesAccount19()
+                                        .setId(settlement.safekeepingAccount()))
+                );
+
+        SettlementParties76 counterpartyParty = buildCounterpartySettlementParty(settlement);
+        if (settlement.direction() == SettlementDirection.RECEIVE) {
+            // DlvrgSttlmPties/Pty1/AnyBIC: counterparty delivers securities to us.
+            instruction.setDlvrgSttlmPties(counterpartyParty);
+        } else {
+            // RcvgSttlmPties/Pty1/AnyBIC: counterparty receives securities from us.
+            instruction.setRcvgSttlmPties(counterpartyParty);
+        }
+
+        mx.setSctiesSttlmTxInstr(instruction);
 
         String message = mx.message();
         log.debug("Built sese.023.001.09 for tradeRef={}: length={}",
                 settlement.transactionId(), message.length());
         return message;
+    }
+
+    private SettlementParties76 buildCounterpartySettlementParty(CanonicalSettlement settlement) {
+        return new SettlementParties76()
+                .setPty1(new PartyIdentificationAndAccount168()
+                        .setId(new PartyIdentification120Choice()
+                                .setAnyBIC(padBic(settlement.counterparty().bic()))));
     }
 
     @Override

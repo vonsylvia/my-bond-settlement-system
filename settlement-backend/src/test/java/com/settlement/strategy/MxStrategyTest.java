@@ -77,6 +77,28 @@ class MxStrategyTest {
     }
 
     @Test
+    void buildSettlementInstruction_shouldSetCounterpartyAsDeliveringPartyForReceive() {
+        String xml = strategy.buildSettlementInstruction(createSampleWithDirection(SettlementDirection.RECEIVE));
+        MxSese02300109 parsed = MxSese02300109.parse(xml);
+        SecuritiesSettlementTransactionInstructionV09 instruction = parsed.getSctiesSttlmTxInstr();
+
+        assertThat(instruction.getDlvrgSttlmPties()).isNotNull();
+        assertThat(instruction.getDlvrgSttlmPties().getPty1().getId().getAnyBIC()).isEqualTo("GOLDUS33XXX");
+        assertThat(instruction.getRcvgSttlmPties()).isNull();
+    }
+
+    @Test
+    void buildSettlementInstruction_shouldSetCounterpartyAsReceivingPartyForDeliver() {
+        String xml = strategy.buildSettlementInstruction(createSampleWithDirection(SettlementDirection.DELIVER));
+        MxSese02300109 parsed = MxSese02300109.parse(xml);
+        SecuritiesSettlementTransactionInstructionV09 instruction = parsed.getSctiesSttlmTxInstr();
+
+        assertThat(instruction.getRcvgSttlmPties()).isNotNull();
+        assertThat(instruction.getRcvgSttlmPties().getPty1().getId().getAnyBIC()).isEqualTo("GOLDUS33XXX");
+        assertThat(instruction.getDlvrgSttlmPties()).isNull();
+    }
+
+    @Test
     void buildSettlementInstruction_shouldSetReceiveForBuy() {
         CanonicalSettlement cs = createSampleWithDirection(SettlementDirection.RECEIVE);
         String xml = strategy.buildSettlementInstruction(cs);
