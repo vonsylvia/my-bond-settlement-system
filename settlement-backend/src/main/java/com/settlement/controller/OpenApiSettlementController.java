@@ -66,7 +66,7 @@ public class OpenApiSettlementController {
         settlementRequest.setBicCode(request.getBicCode());
         settlementRequest.setDirection(request.getDirection());
         settlementRequest.setAccountId(request.getAccountId());
-        settlementRequest.setPreferredStandard(request.getPreferredStandard());
+        settlementRequest.setRequestedStandard(request.getRequestedStandard());
         settlementRequest.setCurrency(request.getCurrency());
         settlementRequest.setSettlementAmount(request.getSettlementAmount());
         settlementRequest.setPaymentType(request.getPaymentType());
@@ -101,11 +101,16 @@ public class OpenApiSettlementController {
         response.setCurrency(instruction.getCurrency());
         response.setSettlementAmount(instruction.getSettlementAmount());
         response.setPaymentType(instruction.getPaymentType());
-        response.setPreferredStandard(instruction.getPreferredStandard().name());
+        response.setRequestedStandard(nameOf(instruction.getRequestedStandard()));
+        response.setResolvedStandard(nameOf(instruction.getResolvedStandard()));
         response.setFinalityTimestamp(instruction.getFinalityTimestamp());
         response.setFinal(instruction.isFinal());
         response.setCreatedAt(instruction.getCreatedAt());
         response.setUpdatedAt(instruction.getUpdatedAt());
         return response;
+    }
+
+    private String nameOf(Enum<?> value) {
+        return value == null ? null : value.name();
     }
 }

@@ -21,7 +21,8 @@ public class SettlementResponse {
     private String currency;
     private BigDecimal settlementAmount;
     private String paymentType;
-    private String preferredStandard;
+    private String requestedStandard;
+    private String resolvedStandard;
     private LocalDateTime finalityTimestamp;
     @JsonProperty("isFinal")
     private boolean isFinal;
@@ -141,8 +142,11 @@ public class SettlementResponse {
     public String getPaymentType() { return paymentType; }
     public void setPaymentType(String paymentType) { this.paymentType = paymentType; }
 
-    public String getPreferredStandard() { return preferredStandard; }
-    public void setPreferredStandard(String preferredStandard) { this.preferredStandard = preferredStandard; }
+    public String getRequestedStandard() { return requestedStandard; }
+    public void setRequestedStandard(String requestedStandard) { this.requestedStandard = requestedStandard; }
+
+    public String getResolvedStandard() { return resolvedStandard; }
+    public void setResolvedStandard(String resolvedStandard) { this.resolvedStandard = resolvedStandard; }
 
     public LocalDateTime getFinalityTimestamp() { return finalityTimestamp; }
     public void setFinalityTimestamp(LocalDateTime finalityTimestamp) { this.finalityTimestamp = finalityTimestamp; }

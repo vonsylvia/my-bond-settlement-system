@@ -167,7 +167,7 @@ paths:
               bicCode: "GOLDUS33XXX"
               direction: "BUY"
               accountId: "ACC-001"
-              preferredStandard: "MT"
+              requestedStandard: "MT"
               currency: "HKD"
               settlementAmount: 998750.25
               paymentType: "AGAINST_PAYMENT"
@@ -409,7 +409,7 @@ paths:
               bicCode: "HSBCHKHHXXX"
               participantName: "HSBC Hong Kong"
               supportedStandard: "DUAL"
-              preferredStandard: "MX"
+              requestedStandard: "MX"
       responses:
         '201':
           description: Counterparty registered
@@ -621,10 +621,10 @@ components:
           maxLength: 50
           description: Internal safekeeping account identifier
           example: "ACC-001"
-        preferredStandard:
+        requestedStandard:
           type: string
           enum: [MT, MX]
-          description: Preferred SWIFT messaging standard (defaults to MT if omitted)
+          description: Requested SWIFT messaging standard hint. Final outbound format is resolved from counterparty capability routing.
           example: "MT"
         currency:
           type: string
@@ -705,6 +705,18 @@ components:
         updatedAt:
           type: string
           format: date-time
+        requestedStandard:
+          type: string
+          enum: [MT, MX]
+          nullable: true
+          description: Request-level format hint captured on the instruction.
+          example: "MX"
+        resolvedStandard:
+          type: string
+          enum: [MT, MX]
+          nullable: true
+          description: Actual outbound format selected by counterparty routing after execution.
+          example: "MT"
 
     OpenApiSettlementResponse:
       type: object

@@ -115,7 +115,7 @@ class SettlementE2ETest {
         mockInstruction.setAccountId("ACC-001");
         mockInstruction.setCurrency("HKD");
         mockInstruction.setPaymentType("AGAINST_PAYMENT");
-        mockInstruction.setPreferredStandard(MessageStandard.MT);
+        mockInstruction.setRequestedStandard(MessageStandard.MT);
 
         when(settlementService.submitInstruction(any(SettlementRequest.class)))
                 .thenReturn(mockInstruction);
@@ -139,7 +139,7 @@ class SettlementE2ETest {
                 .andExpect(jsonPath("$.status").value("PENDING"))
                 .andExpect(jsonPath("$.currency").value("HKD"))
                 .andExpect(jsonPath("$.paymentType").value("AGAINST_PAYMENT"))
-                .andExpect(jsonPath("$.preferredStandard").value("MT"))
+                .andExpect(jsonPath("$.requestedStandard").value("MT"))
                 .andExpect(jsonPath("$.isFinal").value(false));
 
         // Step 3: Query settlement details
@@ -186,7 +186,7 @@ class SettlementE2ETest {
         instruction.setCurrency("USD");
         instruction.setPaymentType("AGAINST_PAYMENT");
         instruction.setSettlementAmount(new BigDecimal("250000.00"));
-        instruction.setPreferredStandard(MessageStandard.MX);
+        instruction.setRequestedStandard(MessageStandard.MX);
 
         when(settlementService.submitInstruction(any())).thenReturn(instruction);
 
@@ -201,7 +201,7 @@ class SettlementE2ETest {
         req.setCurrency("USD");
         req.setPaymentType("AGAINST_PAYMENT");
         req.setSettlementAmount(new BigDecimal("250000.00"));
-        req.setPreferredStandard("MX");
+        req.setRequestedStandard("MX");
 
         settlementMvc.perform(post("/api/settlement")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -209,7 +209,7 @@ class SettlementE2ETest {
                 .andExpect(status().isAccepted())
                 .andExpect(jsonPath("$.currency").value("USD"))
                 .andExpect(jsonPath("$.settlementAmount").value(250000.00))
-                .andExpect(jsonPath("$.preferredStandard").value("MX"));
+                .andExpect(jsonPath("$.requestedStandard").value("MX"));
     }
 
     @Test
@@ -226,7 +226,7 @@ class SettlementE2ETest {
         finalized.setAccountId("ACC-001");
         finalized.setCurrency("HKD");
         finalized.setPaymentType("AGAINST_PAYMENT");
-        finalized.setPreferredStandard(MessageStandard.MT);
+        finalized.setRequestedStandard(MessageStandard.MT);
         finalized.setFinal(true);
         finalized.setFinalityTimestamp(java.time.LocalDateTime.of(2026, 5, 15, 14, 30, 0));
 

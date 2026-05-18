@@ -117,11 +117,16 @@ public class SettlementController {
         response.setCurrency(instruction.getCurrency());
         response.setSettlementAmount(instruction.getSettlementAmount());
         response.setPaymentType(instruction.getPaymentType());
-        response.setPreferredStandard(instruction.getPreferredStandard().name());
+        response.setRequestedStandard(nameOf(instruction.getRequestedStandard()));
+        response.setResolvedStandard(nameOf(instruction.getResolvedStandard()));
         response.setFinalityTimestamp(instruction.getFinalityTimestamp());
         response.setFinal(instruction.isFinal());
         response.setCreatedAt(instruction.getCreatedAt());
         response.setUpdatedAt(instruction.getUpdatedAt());
         return response;
+    }
+
+    private String nameOf(Enum<?> value) {
+        return value == null ? null : value.name();
     }
 }

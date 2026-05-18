@@ -5,6 +5,8 @@ import com.settlement.dao.SettlementInstructionDao;
 import com.settlement.dao.SwiftMessageDao;
 import com.settlement.entity.*;
 import com.settlement.jms.SwiftMessageSender;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -48,6 +50,9 @@ class SettlementXaExecutorIT {
     @Autowired
     private SwiftMessageSender messageSender;
 
+    @PersistenceContext
+    private EntityManager entityManager;
+
     @BeforeEach
     void setUp() {
         reset(messageSender);
@@ -64,6 +69,7 @@ class SettlementXaExecutorIT {
         Optional<SettlementInstruction> updated = instructionDao.findByTradeRef("TR-XA-IT-001");
         assertThat(updated).isPresent();
         assertThat(updated.get().getStatus()).isEqualTo(InstructionStatus.SENT);
+        assertThat(updated.get().getResolvedStandard()).isEqualTo(MessageStandard.MT);
     }
 
     @Test
@@ -84,9 +90,11 @@ class SettlementXaExecutorIT {
 
         xaExecutor.recordFailure("TR-XA-IT-003", 2, "timeout", false, 3);
 
+        entityManager.flush();
+        entityManager.clear();
         Optional<SettlementInstruction> updated = instructionDao.findByTradeRef("TR-XA-IT-003");
         assertThat(updated).isPresent();
-        assertThat(updated.get().getStatus()).isEqualTo(InstructionStatus.FAILED);
+        assertThat(updated.get().getStatus()).isEqualTo(InstructionStatus.RETRYING);
         assertThat(updated.get().getRetryCount()).isEqualTo(2);
         assertThat(updated.get().getFailureReason()).isEqualTo("timeout");
     }
@@ -102,6 +110,24 @@ class SettlementXaExecutorIT {
         verify(messageSender, never()).sendSwiftMessage(anyString(), anyString(), anyString(), any());
     }
 
+    @Test
+    void executeSettlement_shouldFallbackToMtForUnknownCounterparty() {
+        SettlementInstruction instruction = createAndSave("TR-XA-IT-005");
+        instruction.setRequestedStandard(MessageStandard.MX);
+        instructionDao.save(instruction);
+        createOutboundMessage(instruction);
+        doNothing().when(messageSender).sendSwiftMessage(anyString(), anyString(), anyString(), any());
+
+        xaExecutor.executeSettlement("TR-XA-IT-005");
+
+        verify(messageSender).sendSwiftMessage(
+                eq("TR-XA-IT-005"), anyString(), eq("MT541"), eq(MessageStandard.MT));
+        assertThat(instructionDao.findByTradeRef("TR-XA-IT-005"))
+                .get()
+                .extracting(SettlementInstruction::getResolvedStandard)
+                .isEqualTo(MessageStandard.MT);
+    }
+
     private SettlementInstruction createAndSave(String tradeRef) {
         SettlementInstruction instruction = new SettlementInstruction();
         instruction.setTradeRef(tradeRef);
@@ -113,7 +139,7 @@ class SettlementXaExecutorIT {
         instruction.setDirection(Direction.BUY);
         instruction.setAccountId("ACC-IT");
         instruction.setStatus(InstructionStatus.PENDING);
-        instruction.setPreferredStandard(MessageStandard.MT);
+        instruction.setRequestedStandard(MessageStandard.MT);
         return instructionDao.save(instruction);
     }
 

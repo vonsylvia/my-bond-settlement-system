@@ -52,9 +52,13 @@ public class SettlementInstruction {
     @Column(name = "ACCOUNT_ID", nullable = false, length = 50)
     private String accountId;
 
-    @Column(name = "PREFERRED_STANDARD", nullable = false, length = 5)
+    @Column(name = "REQUESTED_STANDARD", length = 5)
     @Enumerated(EnumType.STRING)
-    private MessageStandard preferredStandard = MessageStandard.MT;
+    private MessageStandard requestedStandard = MessageStandard.MT;
+
+    @Column(name = "RESOLVED_STANDARD", length = 5)
+    @Enumerated(EnumType.STRING)
+    private MessageStandard resolvedStandard;
 
     @Column(name = "RETRY_COUNT", nullable = false)
     private int retryCount = 0;
@@ -198,12 +202,20 @@ public class SettlementInstruction {
         this.accountId = accountId;
     }
 
-    public MessageStandard getPreferredStandard() {
-        return preferredStandard;
+    public MessageStandard getRequestedStandard() {
+        return requestedStandard;
     }
 
-    public void setPreferredStandard(MessageStandard preferredStandard) {
-        this.preferredStandard = preferredStandard;
+    public void setRequestedStandard(MessageStandard requestedStandard) {
+        this.requestedStandard = requestedStandard;
+    }
+
+    public MessageStandard getResolvedStandard() {
+        return resolvedStandard;
+    }
+
+    public void setResolvedStandard(MessageStandard resolvedStandard) {
+        this.resolvedStandard = resolvedStandard;
     }
 
     public int getRetryCount() {
