@@ -50,6 +50,9 @@ class DvpSettlementServiceTest {
     @Test
     void lockForDvp_shouldReserveFundsAndSetDvpLocked_forBuy() {
         SettlementInstruction instruction = createBuyInstruction();
+        when(instructionDao.compareAndSetStatus(
+                "TR-DVP001", InstructionStatus.SENT, InstructionStatus.DVP_LOCKED))
+                .thenReturn(1);
         when(chatsGateway.reserveFunds("ACC-001", "HKD", new BigDecimal("5000000.00"), "TR-DVP001"))
                 .thenReturn(true);
         when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
@@ -72,6 +75,9 @@ class DvpSettlementServiceTest {
     @Test
     void lockForDvp_shouldFail_whenInsufficientFunds() {
         SettlementInstruction instruction = createBuyInstruction();
+        when(instructionDao.compareAndSetStatus(
+                "TR-DVP001", InstructionStatus.SENT, InstructionStatus.DVP_LOCKED))
+                .thenReturn(1);
         when(chatsGateway.reserveFunds(any(), any(), any(), any())).thenReturn(false);
         when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -90,6 +96,20 @@ class DvpSettlementServiceTest {
                 .contains("Cash reservation failed")
                 .contains("HKD")
                 .contains("ACC-001");
+    }
+
+    @Test
+    void lockForDvp_shouldSkip_whenConcurrentProcessorAlreadyClaimedLock() {
+        SettlementInstruction instruction = createBuyInstruction();
+        when(instructionDao.compareAndSetStatus(
+                "TR-DVP001", InstructionStatus.SENT, InstructionStatus.DVP_LOCKED))
+                .thenReturn(0);
+
+        dvpService.lockForDvp(instruction);
+
+        assertThat(instruction.getStatus()).isEqualTo(InstructionStatus.SENT);
+        verify(chatsGateway, never()).reserveFunds(any(), any(), any(), any());
+        verify(instructionDao, never()).save(any());
     }
 
     @Test
@@ -209,6 +229,23 @@ class DvpSettlementServiceTest {
 
         verify(chatsGateway, never()).releaseFunds(any(), any(), any(), any());
         verify(instructionDao, never()).save(any());
+    }
+
+    @Test
+    void recordAutomaticDvpFailure_shouldMarkInstructionFailedAndAudit() {
+        SettlementInstruction instruction = createBuyInstruction();
+        instruction.setStatus(InstructionStatus.MATCHED);
+        when(instructionDao.findByTradeRef("TR-DVP001")).thenReturn(Optional.of(instruction));
+        when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        dvpService.recordAutomaticDvpFailure("TR-DVP001", "securities leg failed");
+
+        assertThat(instruction.getStatus()).isEqualTo(InstructionStatus.FAILED);
+        assertThat(instruction.getFailureReason()).contains("Automatic DVP orchestration failed");
+        ArgumentCaptor<AuditLog> auditCaptor = ArgumentCaptor.forClass(AuditLog.class);
+        verify(auditLogDao).save(auditCaptor.capture());
+        assertThat(auditCaptor.getValue().getEventType()).isEqualTo(AuditEventType.DVP_FAILED);
+        assertThat(auditCaptor.getValue().getDetail()).contains("securities leg failed");
     }
 
     private SettlementInstruction createBuyInstruction() {

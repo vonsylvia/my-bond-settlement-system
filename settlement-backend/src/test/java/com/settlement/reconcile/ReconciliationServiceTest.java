@@ -7,6 +7,7 @@ import com.settlement.dao.SettlementInstructionDao;
 import com.settlement.dao.SwiftMessageDao;
 import com.settlement.entity.*;
 import com.settlement.service.AlertWebhookService;
+import com.settlement.service.DvpOrchestrator;
 import com.settlement.strategy.MtStrategy;
 import com.settlement.strategy.SwiftMessageStrategyFactory;
 import org.junit.jupiter.api.BeforeEach;
@@ -47,6 +48,9 @@ class ReconciliationServiceTest {
     @Mock
     private AlertWebhookService alertService;
 
+    @Mock
+    private DvpOrchestrator dvpOrchestrator;
+
     private ReconciliationMetrics metrics;
 
     private ReconciliationService reconciliationService;
@@ -82,7 +86,7 @@ class ReconciliationServiceTest {
         SwiftMessageStrategyFactory factory = new SwiftMessageStrategyFactory(List.of(mtStrategy));
         reconciliationService = new ReconciliationService(
                 instructionDao, auditLogDao,
-                swiftMessageDao, metrics, alertService, factory);
+                swiftMessageDao, metrics, alertService, factory, dvpOrchestrator);
 
         sampleInstruction = new SettlementInstruction();
         sampleInstruction.setId(1L);
@@ -99,7 +103,7 @@ class ReconciliationServiceTest {
     }
 
     @Test
-    void processSwiftReply_shouldMarkMatchedWithoutFinalPositionMovement() {
+    void processSwiftReply_shouldMarkMatchedAndTriggerAutomaticDvp() {
         when(instructionDao.findByTradeRef("TR-TEST123456")).thenReturn(Optional.of(sampleInstruction));
         when(instructionDao.save(any())).thenAnswer(inv -> inv.getArgument(0));
         when(swiftMessageDao.nextSequenceNo(anyLong(), anyString(), any())).thenReturn(1);
@@ -112,6 +116,7 @@ class ReconciliationServiceTest {
         assertThat(sampleInstruction.getFinalityTimestamp()).isNull();
         verify(holdingDao, never()).save(any());
         verify(movementDao, never()).save(any());
+        verify(dvpOrchestrator).processMatchedInstructionAsync("TR-TEST123456");
     }
 
     @Test
@@ -147,6 +152,7 @@ class ReconciliationServiceTest {
 
         assertThat(sampleInstruction.getStatus()).isEqualTo(InstructionStatus.FAILED);
         verify(holdingDao, never()).save(any());
+        verify(dvpOrchestrator, never()).processMatchedInstructionAsync(anyString());
     }
 
     @Test

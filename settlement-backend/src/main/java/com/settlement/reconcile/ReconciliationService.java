@@ -7,12 +7,15 @@ import com.settlement.dao.SwiftMessageDao;
 import com.settlement.canonical.CanonicalStatusAdvice;
 import com.settlement.entity.*;
 import com.settlement.service.AlertWebhookService;
+import com.settlement.service.DvpOrchestrator;
 import com.settlement.strategy.SwiftMessageStrategy;
 import com.settlement.strategy.SwiftMessageStrategyFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.util.Optional;
 
@@ -32,19 +35,22 @@ public class ReconciliationService implements ReconciliationHandler {
     private final ReconciliationMetrics metrics;
     private final AlertWebhookService alertService;
     private final SwiftMessageStrategyFactory strategyFactory;
+    private final DvpOrchestrator dvpOrchestrator;
 
     public ReconciliationService(SettlementInstructionDao instructionDao,
                                  AuditLogDao auditLogDao,
                                  SwiftMessageDao swiftMessageDao,
                                  ReconciliationMetrics metrics,
                                  AlertWebhookService alertService,
-                                 SwiftMessageStrategyFactory strategyFactory) {
+                                 SwiftMessageStrategyFactory strategyFactory,
+                                 DvpOrchestrator dvpOrchestrator) {
         this.instructionDao = instructionDao;
         this.auditLogDao = auditLogDao;
         this.swiftMessageDao = swiftMessageDao;
         this.metrics = metrics;
         this.alertService = alertService;
         this.strategyFactory = strategyFactory;
+        this.dvpOrchestrator = dvpOrchestrator;
     }
 
     @Transactional
@@ -121,9 +127,10 @@ public class ReconciliationService implements ReconciliationHandler {
                 "Settlement instruction matched/status confirmed: ISIN=" + instruction.getIsin() +
                 " QTY=" + instruction.getQuantity() +
                 " DIR=" + instruction.getDirection()));
-        log.info("Settlement status MATCHED, awaiting book-entry settlement/finality: tradeRef={}",
+        log.info("Settlement status MATCHED, automatic DVP orchestration queued after commit: tradeRef={}",
                 instruction.getTradeRef());
         metrics.recordMatched();
+        scheduleDvpAfterCommit(instruction.getTradeRef());
     }
 
     private void handleFailed(SettlementInstruction instruction) {
@@ -171,5 +178,18 @@ public class ReconciliationService implements ReconciliationHandler {
             case SENT, MATCHED, FAILED, DVP_LOCKED -> true;
             case PENDING, SUBMITTING, RETRYING, CANCELLED -> false;
         };
+    }
+
+    private void scheduleDvpAfterCommit(String tradeRef) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    dvpOrchestrator.processMatchedInstructionAsync(tradeRef);
+                }
+            });
+        } else {
+            dvpOrchestrator.processMatchedInstructionAsync(tradeRef);
+        }
     }
 }
