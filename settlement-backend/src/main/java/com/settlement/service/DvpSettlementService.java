@@ -77,6 +77,22 @@ public class DvpSettlementService {
 
         String currency = instruction.getCurrency();
         String tradeRef = instruction.getTradeRef();
+        InstructionStatus startingStatus = instruction.getStatus();
+        if (startingStatus == InstructionStatus.DVP_LOCKED) {
+            log.info("DVP lock already acquired, skipping duplicate lock: tradeRef={}", tradeRef);
+            return;
+        }
+        if (startingStatus != InstructionStatus.SENT && startingStatus != InstructionStatus.MATCHED) {
+            throw new BusinessException("DVP lock requires SENT or MATCHED status: " + tradeRef);
+        }
+
+        int claimed = instructionDao.compareAndSetStatus(
+                tradeRef, startingStatus, InstructionStatus.DVP_LOCKED);
+        if (claimed == 0) {
+            log.info("DVP lock skipped due to concurrent status change: tradeRef={}", tradeRef);
+            return;
+        }
+        instruction.setStatus(InstructionStatus.DVP_LOCKED);
 
         String payerAccount = cashPayerAccount(instruction);
         boolean reserved = chatsGateway.reserveFunds(payerAccount, currency, amount, tradeRef);
@@ -89,7 +105,6 @@ public class DvpSettlementService {
             throw new BusinessException("DVP lock failed: insufficient funds");
         }
 
-        instruction.setStatus(InstructionStatus.DVP_LOCKED);
         instructionDao.save(instruction);
 
         auditLogDao.save(new AuditLog(tradeRef, AuditEventType.DVP_LOCKED,
@@ -206,6 +221,23 @@ public class DvpSettlementService {
         auditLogDao.save(new AuditLog(instruction.getTradeRef(), AuditEventType.DVP_FAILED,
                 "DVP rolled back — funds released"));
         log.info("DVP rolled back: tradeRef={}", instruction.getTradeRef());
+    }
+
+    @Transactional
+    public void recordAutomaticDvpFailure(String tradeRef, String reason) {
+        instructionDao.findByTradeRef(tradeRef)
+                .filter(instruction -> !instruction.isFinal())
+                .ifPresent(instruction -> {
+                    instruction.setStatus(InstructionStatus.FAILED);
+                    instruction.setFailureReason("Automatic DVP orchestration failed");
+                    instructionDao.save(instruction);
+                });
+
+        String detail = "Automatic DVP orchestration failed";
+        if (reason != null && !reason.isBlank()) {
+            detail += ": " + reason;
+        }
+        auditLogDao.save(new AuditLog(tradeRef, AuditEventType.DVP_FAILED, detail));
     }
 
     private String cashPayerAccount(SettlementInstruction instruction) {
