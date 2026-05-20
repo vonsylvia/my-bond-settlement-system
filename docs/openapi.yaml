@@ -14,7 +14,11 @@ paths:
   /api/settlement:
     post:
       summary: Create a new settlement instruction
-      description: Submits a settlement instruction, builds MT541, and sends to SWIFT via IBM MQ
+      description: |
+        Submits a settlement instruction, builds an MT/MX settlement instruction, and sends it to SWIFT via IBM MQ.
+        DVP is not a manual REST workflow; when a matched SWIFT/CMU status advice is received,
+        the backend automatically orchestrates cash reservation, securities movement, rollback on failure,
+        and finality updates.
       operationId: createSettlement
       requestBody:
         required: true
@@ -139,6 +143,8 @@ paths:
       summary: Submit a settlement instruction through the participant Open API
       description: |
         Accepts a participant-submitted settlement instruction for asynchronous processing.
+        Matched status advice received later from SWIFT/CMU automatically triggers DVP orchestration for
+        Against Payment instructions; clients do not call separate DVP lock/complete endpoints.
         The tuple `X-Participant-Id + clientReference` is treated as an idempotency key.
         Replaying the same payload returns the existing instruction; replaying the same
         client reference with a different payload returns a business error.

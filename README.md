@@ -4,7 +4,7 @@ A SWIFT bond settlement workflow system built for IBM WebSphere + Oracle environ
 
 ## Architecture
 
-- **Frontend**: Vue.js 3 + Vite + Axios — Pre-Settlement (Trade Matching) / Settlement (SWIFT Direct, Monitor, DVP) / Reference (Holdings, Counterparties)
+- **Frontend**: Vue.js 3 + Vite + Axios — Pre-Settlement (Trade Matching) / Settlement (SWIFT Direct, Monitor) / Reference (Holdings, Counterparties)
 - **Backend**: Spring MVC 6 REST API
 - **Settlement Engine**:
   - **DVP (Delivery vs Payment)**: BIS Model 1 real-time DVP with CHATS RTGS abstraction — simultaneous securities and cash settlement (PFMI Principle 12)
@@ -117,6 +117,9 @@ sequenceDiagram
     actor Buyer
     actor Seller
     participant UI as Vue.js Frontend
+    participant MDB as SwiftReplyMDB
+    participant REC as Reconciliation<br/>Service
+    participant ORCH as DvpOrchestrator
     participant MATCH as MatchingEngine<br/>Service
     participant DVP as DvpSettlement<br/>Service
     participant CHATS as CHATS Gateway<br/>(RTGS)
@@ -138,9 +141,11 @@ sequenceDiagram
     end
 
     rect rgb(255, 245, 230)
-        Note over Buyer,DB: Phase 2: DVP Settlement (BIS Model 1)
-        Buyer->>UI: Initiate DVP lock
-        UI->>DVP: POST /api/dvp/{tradeRef}/lock
+        Note over Buyer,DB: Phase 2: Matched status advice triggers automatic DVP
+        MDB->>REC: MT548 / sese.024 status advice
+        REC->>DB: Update status → MATCHED
+        REC->>ORCH: afterCommit: processMatchedInstructionAsync(tradeRef)
+        ORCH->>DVP: lockForDvp(tradeRef)
         DVP->>DVP: Validate payment type (AGAINST_PAYMENT)
         DVP->>CHATS: reserveFunds(accountId, currency, amount)
         CHATS-->>DVP: Funds reserved
@@ -150,8 +155,7 @@ sequenceDiagram
 
     rect rgb(230, 255, 230)
         Note over Buyer,DB: Phase 3: DVP Completion + Finality
-        Buyer->>UI: Complete DVP
-        UI->>DVP: POST /api/dvp/{tradeRef}/complete
+        ORCH->>DVP: completeDvp(tradeRef)
         DVP->>DB: Update BondHolding (securities transfer)
         DVP->>DB: Append SecurityMovement (CREDIT/DEBIT)
         DVP->>DB: Update status → MATCHED, set finalityTimestamp, isFinal=true
@@ -160,7 +164,7 @@ sequenceDiagram
     end
 
     opt DVP Failure
-        UI->>DVP: POST /api/dvp/{tradeRef}/rollback
+        ORCH->>DVP: rollbackDvp(tradeRef)
         DVP->>CHATS: releaseFunds(accountId, currency, amount)
         DVP->>DB: Update status → FAILED, restore CashAccount
     end
@@ -287,9 +291,8 @@ curl -X POST http://localhost:9080/settlement/api/matching \
   -d '{"tradeRef":"M-SELL-001","isin":"HK0000163607","settlementDate":"2026-06-01","quantity":100000,"amount":98000,"currency":"HKD","submitterBic":"BABORHKHXXX","counterpartyBic":"HSBCHKHKXXX","direction":"SELL"}'
 # Both should auto-match (status=MATCHED)
 
-# Check holdings and cash accounts
+# Check holdings
 curl http://localhost:9080/settlement/api/holdings
-curl http://localhost:9080/settlement/api/dvp/cash-accounts
 ```
 
 Current REST paths:
@@ -424,7 +427,6 @@ my-bond-settlement-system/
 │       ├── controller/
 │       │   ├── SettlementController.java    # Settlement CRUD + messages
 │       │   ├── MatchingController.java      # Bilateral matching (submit/retry/cancel/list)
-│       │   ├── DvpController.java           # DVP operations (lock/complete/rollback + cash accounts)
 │       │   ├── CounterpartyController.java  # Counterparty capability CRUD
 │       │   ├── TranslationController.java   # MT↔MX translation API
 │       │   └── MqConnectivityController.java # MQ health & MDB test endpoints
@@ -438,6 +440,7 @@ my-bond-settlement-system/
 │       │   └── TranslationService.java      # Canonical-pivot translation (instruction + status)
 │       ├── service/
 │       │   ├── SettlementService.java       # Settlement orchestration
+│       │   ├── DvpOrchestrator.java         # Auto DVP after matched SWIFT status advice
 │       │   ├── DvpSettlementService.java    # BIS Model 1 DVP (lock → reserve → complete)
 │       │   ├── MatchingEngineService.java   # Bilateral matching with tolerance
 │       │   ├── ChatsGateway.java            # CHATS RTGS interface abstraction
@@ -462,12 +465,11 @@ my-bond-settlement-system/
     └── src/
         ├── App.vue                  # Navigation: Pre-Settlement | Settlement | Reference
         ├── main.js                  # Vue Router
-        ├── api/settlement.js        # API module (settlement, matching, DVP)
+        ├── api/settlement.js        # API module (settlement, matching, reference data)
         ├── components/
         │   └── StatusBadge.vue      # Status display (incl. DVP_LOCKED, finality mark)
         └── views/
             ├── MatchingView.vue     # Trade Matching — bilateral submit + list + retry/cancel
-            ├── DvpView.vue          # DVP operations — lock/complete/rollback + cash accounts
             ├── SettlementForm.vue   # SWIFT Direct — submit to SWIFT network
             ├── SettlementList.vue   # Settlement Monitor — track lifecycle
             └── HoldingsView.vue     # Bond holdings dashboard
@@ -773,9 +775,9 @@ SWIFT Direct Path:
   PENDING → SUBMITTING → RETRYING → SENT                  (succeeded on retry)
   FAILED  → PENDING → SUBMITTING → SENT                   (manual retry success)
 
-DVP Path:
-  PENDING → SENT → DVP_LOCKED → MATCHED (+ finality)      (DVP happy path)
-  PENDING → SENT → DVP_LOCKED → FAILED                    (DVP rollback)
+Automatic DVP Path:
+  PENDING → SUBMITTING → SENT → MATCHED → DVP_LOCKED → MATCHED (+ finality)
+  PENDING → SUBMITTING → SENT → MATCHED → DVP_LOCKED → FAILED
 
 Matching Engine (separate MATCHING_INSTRUCTION table):
   ALLEGED → MATCHED (auto-matched with counterparty)
@@ -784,7 +786,7 @@ Matching Engine (separate MATCHING_INSTRUCTION table):
 ```
 
 > **Note:** During retries, the status is `RETRYING` (not `FAILED`) so API consumers can distinguish between a transient retry and a terminal failure.
-> **Note:** `MATCHED` is not finality by itself. `isFinal=true` and `finalityTimestamp` are set only when a book-entry settlement path, such as DVP completion, finalizes the instruction.
+> **Note:** The first `MATCHED` is the SWIFT/CMU matched status advice. It is not finality by itself. `isFinal=true` and `finalityTimestamp` are set only after automatic book-entry DVP completion finalizes the instruction.
 
 ## API Endpoints
 
@@ -844,12 +846,7 @@ curl -X POST http://localhost:9080/settlement/api/open/settlement-instructions \
 
 ### DVP Settlement
 
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/dvp/{tradeRef}/lock` | Lock instruction for DVP — reserves cash via CHATS, sets DVP_LOCKED |
-| `POST` | `/api/dvp/{tradeRef}/complete` | Complete DVP — transfers securities, sets MATCHED with finality |
-| `POST` | `/api/dvp/{tradeRef}/rollback` | Rollback DVP — releases reserved funds, sets FAILED |
-| `GET` | `/api/dvp/cash-accounts` | List cash accounts (optional `?accountId=` filter) |
+After a SWIFT/CMU status advice confirms the instruction is matched, `ReconciliationService` schedules `DvpOrchestrator` after commit. The orchestrator performs DVP lock, cash reservation, securities movement, rollback on failure, and finality updates through `DvpSettlementService`.
 
 ### Reference Data & Operations
 
