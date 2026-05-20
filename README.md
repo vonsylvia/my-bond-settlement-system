@@ -305,8 +305,20 @@ Current REST paths:
 cd settlement-frontend
 npm install
 npm run dev    # Development server on http://localhost:5173
+npm run dev:mock # Frontend-only mode with in-memory API mocks
 npm run build  # Production build
 ```
+
+#### Frontend mock mode
+
+For UI development without Liberty, Oracle, or MQ, run:
+
+```bash
+cd settlement-frontend
+npm run dev:mock
+```
+
+Mock mode is enabled by `settlement-frontend/.env.mock` (`VITE_USE_MOCK=true`). The frontend still calls the same `/api` functions, but Axios intercepts requests in-browser and serves in-memory fixtures for settlements, SWIFT messages, holdings, counterparties, and matching. Use regular `npm run dev` when you want the Vite proxy to call the real backend at `http://localhost:9080/settlement`.
 
 ## Common Commands
 

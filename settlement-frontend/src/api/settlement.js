@@ -7,90 +7,74 @@ const api = axios.create({
   }
 })
 
-export function createSettlement(data) {
-  return api.post('/settlement', data)
+const mockReady = import.meta.env.VITE_USE_MOCK === 'true'
+  ? import('../mocks/index.js').then(({ installMockApi }) => {
+    installMockApi(api)
+  })
+  : Promise.resolve()
+
+function withMockReady(request) {
+  return mockReady.then(request)
 }
 
-export function getSettlement(tradeRef) {
-  return api.get(`/settlement/${tradeRef}`)
+export function createSettlement(data) {
+  return withMockReady(() => api.post('/settlement', data))
 }
 
 export function listSettlements(page = 0, size = 20) {
-  return api.get('/settlement', { params: { page, size } })
+  return withMockReady(() => api.get('/settlement', { params: { page, size } }))
 }
 
 export function retrySettlement(tradeRef) {
-  return api.post(`/settlement/${tradeRef}/retry`)
+  return withMockReady(() => api.post(`/settlement/${tradeRef}/retry`))
 }
 
 export function getHoldings(accountId) {
   const params = accountId ? { accountId } : {}
-  return api.get('/holdings', { params })
+  return withMockReady(() => api.get('/holdings', { params }))
 }
 
 export function getMessages(tradeRef) {
-  return api.get(`/settlement/${tradeRef}/messages`)
+  return withMockReady(() => api.get(`/settlement/${tradeRef}/messages`))
 }
 
 export function getCounterpartyByBic(bicCode) {
-  return api.get(`/counterparty/${bicCode}`)
+  return withMockReady(() => api.get(`/counterparty/${bicCode}`))
 }
 
 export function listCounterparties() {
-  return api.get('/counterparty')
+  return withMockReady(() => api.get('/counterparty'))
 }
 
 export function createCounterparty(data) {
-  return api.post('/counterparty', data)
+  return withMockReady(() => api.post('/counterparty', data))
 }
 
 export function updateCounterparty(bicCode, data) {
-  return api.put(`/counterparty/${bicCode}`, data)
+  return withMockReady(() => api.put(`/counterparty/${bicCode}`, data))
 }
 
 export function deleteCounterparty(bicCode) {
-  return api.delete(`/counterparty/${bicCode}`)
-}
-
-export function translateMessage(rawPayload, targetStandard) {
-  const data = { rawPayload }
-  if (targetStandard) data.targetStandard = targetStandard
-  return api.post('/translation/translate', data)
-}
-
-export function detectMessage(rawPayload) {
-  return api.post('/translation/detect', { rawPayload })
-}
-
-export function reconcilePositions() {
-  return api.post('/positions/reconcile')
-}
-
-export function dailyClose() {
-  return api.post('/positions/daily-close')
-}
-
-export function getMqHealth() {
-  return api.get('/mq/health')
+  return withMockReady(() => api.delete(`/counterparty/${bicCode}`))
 }
 
 export const matchingApi = {
   list(params = {}) {
-    return api.get('/matching', { params })
+    return withMockReady(() => api.get('/matching', { params }))
   },
   submit(instruction) {
-    return api.post('/matching', instruction)
+    return withMockReady(() => api.post('/matching', instruction))
   },
   retry(id) {
-    return api.post(`/matching/${id}/retry`)
+    return withMockReady(() => api.post(`/matching/${id}/retry`))
   },
   cancel(id) {
-    return api.post(`/matching/${id}/cancel`)
+    return withMockReady(() => api.post(`/matching/${id}/cancel`))
   },
   alleged() {
-    return api.get('/matching/alleged')
+    return withMockReady(() => api.get('/matching/alleged'))
   },
   unmatched() {
-    return api.get('/matching/unmatched')
+    return withMockReady(() => api.get('/matching/unmatched'))
   }
 }
