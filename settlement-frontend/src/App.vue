@@ -14,7 +14,6 @@
           <span class="nav-group-label">Settlement</span>
           <router-link to="/settlement/new" class="nav-link">SWIFT Direct</router-link>
           <router-link to="/settlement/list" class="nav-link">Monitor</router-link>
-          <router-link to="/dvp" class="nav-link">DVP</router-link>
         </div>
         <div class="nav-divider"></div>
         <div class="nav-group">

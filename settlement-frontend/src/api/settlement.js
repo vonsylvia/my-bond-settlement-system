@@ -94,19 +94,3 @@ export const matchingApi = {
     return api.get('/matching/unmatched')
   }
 }
-
-export const dvpApi = {
-  lock(tradeRef) {
-    return api.post(`/dvp/${tradeRef}/lock`)
-  },
-  complete(tradeRef) {
-    return api.post(`/dvp/${tradeRef}/complete`)
-  },
-  rollback(tradeRef) {
-    return api.post(`/dvp/${tradeRef}/rollback`)
-  },
-  cashAccounts(accountId) {
-    const params = accountId ? { accountId } : {}
-    return api.get('/dvp/cash-accounts', { params })
-  }
-}
